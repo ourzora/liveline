@@ -99,6 +99,7 @@ function updateWindowTransition(
   now: number,
   points: LivelinePoint[],
   smoothValue: number,
+  buffer: number,
 ): { windowSecs: number; windowTransProgress: number } {
   if (wt.to !== cfg.windowSecs) {
     wt.from = displayWindow
@@ -106,7 +107,7 @@ function updateWindowTransition(
     wt.startMs = now_ms
     wt.rangeFromMin = displayMin
     wt.rangeFromMax = displayMax
-    const targetRightEdge = now + cfg.windowSecs * WINDOW_BUFFER
+    const targetRightEdge = now + cfg.windowSecs * buffer
     const targetLeftEdge = targetRightEdge - cfg.windowSecs
     const targetVisible: LivelinePoint[] = []
     for (const p of points) {
@@ -577,19 +578,30 @@ export function useLivelineEngine(
     }
     const smoothValue = displayValueRef.current
 
+    const pad = cfg.padding
+    const chartW = w - pad.left - pad.right
+
+    // Dynamic buffer: when momentum arrows + badge are both on, ensure enough
+    // gap between the live dot and badge for the arrows to fit.
+    // Gap formula: buffer * chartW - 7. Need ~30px for arrows.
+    const needsArrowRoom = cfg.showMomentum
+    const buffer = needsArrowRoom
+      ? Math.max(WINDOW_BUFFER, 37 / Math.max(chartW, 1))
+      : WINDOW_BUFFER
+
     // Window transition
     const transition = windowTransitionRef.current
     const now = Date.now() / 1000
     const windowResult = updateWindowTransition(
       cfg, transition, displayWindowRef.current,
       displayMinRef.current, displayMaxRef.current,
-      noMotion, now_ms, now, points, smoothValue,
+      noMotion, now_ms, now, points, smoothValue, buffer,
     )
     displayWindowRef.current = windowResult.windowSecs
     const windowSecs = windowResult.windowSecs
     const windowTransProgress = windowResult.windowTransProgress
 
-    const rightEdge = now + windowSecs * WINDOW_BUFFER
+    const rightEdge = now + windowSecs * buffer
     const leftEdge = rightEdge - windowSecs
 
     // Filter visible points
@@ -605,9 +617,6 @@ export function useLivelineEngine(
       rafRef.current = requestAnimationFrame(draw)
       return
     }
-
-    const pad = cfg.padding
-    const chartW = w - pad.left - pad.right
     const chartH = h - pad.top - pad.bottom
 
     // Compute + smooth Y range

@@ -112,7 +112,7 @@ export function drawArrows(
   const cycle = (Date.now() % 1400) / 1400
   const drawChevrons = (dir: -1 | 1, opacity: number) => {
     if (opacity < 0.01) return
-    const baseX = x + 22
+    const baseX = x + 19
     const baseY = y
 
     ctx.save()
