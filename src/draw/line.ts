@@ -8,7 +8,6 @@ function renderCurve(
   palette: LivelinePalette,
   pts: [number, number][],
   showFill: boolean,
-  maxSplinePts: number,
 ) {
   const { h, pad } = layout
 
@@ -19,7 +18,7 @@ function renderCurve(
     ctx.beginPath()
     ctx.moveTo(pts[0][0], h - pad.bottom)
     ctx.lineTo(pts[0][0], pts[0][1])
-    drawSpline(ctx, pts, 0.15, maxSplinePts)
+    drawSpline(ctx, pts)
     ctx.lineTo(pts[pts.length - 1][0], h - pad.bottom)
     ctx.closePath()
     ctx.fillStyle = grad
@@ -28,7 +27,7 @@ function renderCurve(
 
   ctx.beginPath()
   ctx.moveTo(pts[0][0], pts[0][1])
-  drawSpline(ctx, pts, 0.15, maxSplinePts)
+  drawSpline(ctx, pts)
   ctx.strokeStyle = palette.line
   ctx.lineWidth = palette.lineWidth
   ctx.lineJoin = 'round'
@@ -70,11 +69,6 @@ export function drawLine(
 
   const isScrubbing = scrubX !== null
 
-  // Max spline segments = chart width in px (1 bezier per pixel).
-  // Prevents index-based downsampling jitter on dense windows (5min+)
-  // while still reducing for extreme cases (1-week).
-  const maxSplinePts = Math.max(300, Math.ceil(chartW))
-
   // Clip line + fill to chart area — during big value jumps the range
   // lerps smoothly so the line may extend beyond the chart bounds.
   // Clipping keeps it tidy while the range catches up.
@@ -89,7 +83,7 @@ export function drawLine(
     ctx.beginPath()
     ctx.rect(0, 0, scrubX!, h)
     ctx.clip()
-    renderCurve(ctx, layout, palette, pts, showFill, maxSplinePts)
+    renderCurve(ctx, layout, palette, pts, showFill)
     ctx.restore()
 
     // Dimmed portion: clipped to RIGHT of scrub point
@@ -98,10 +92,10 @@ export function drawLine(
     ctx.rect(scrubX!, 0, layout.w - scrubX!, h)
     ctx.clip()
     ctx.globalAlpha = 1 - scrubAmount * 0.6
-    renderCurve(ctx, layout, palette, pts, showFill, maxSplinePts)
+    renderCurve(ctx, layout, palette, pts, showFill)
     ctx.restore()
   } else {
-    renderCurve(ctx, layout, palette, pts, showFill, maxSplinePts)
+    renderCurve(ctx, layout, palette, pts, showFill)
   }
 
   // Restore from chart-area clip
