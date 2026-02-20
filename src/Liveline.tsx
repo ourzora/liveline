@@ -1,4 +1,4 @@
-import { useRef, useState, useLayoutEffect } from 'react'
+import { useRef, useState, useLayoutEffect, useMemo } from 'react'
 import type { LivelineProps, Momentum, DegenOptions } from './types'
 import { resolveTheme } from './theme'
 import { useLivelineEngine } from './useLivelineEngine'
@@ -24,6 +24,9 @@ export function Liveline({
   momentum = true,
   fill = true,
   scrub = true,
+  loading = false,
+  paused = false,
+  emptyText,
   exaggerate = false,
   degen: degenProp,
   badgeTail = true,
@@ -54,7 +57,7 @@ export function Liveline({
   const windowBtnRefs = useRef<Map<number, HTMLButtonElement>>(new Map())
   const [indicatorStyle, setIndicatorStyle] = useState<{ left: number; width: number } | null>(null)
 
-  const palette = resolveTheme(color, theme)
+  const palette = useMemo(() => resolveTheme(color, theme), [color, theme])
   const isDark = theme === 'dark'
 
   // Resolve momentum prop: boolean enables auto-detect, string overrides
@@ -127,6 +130,9 @@ export function Liveline({
     valueMomentumColor,
     valueDisplayRef: showValue ? valueDisplayRef : undefined,
     orderbookData: orderbook,
+    loading,
+    paused,
+    emptyText,
   })
 
   const cursorStyle = scrub ? cursor : 'default'
