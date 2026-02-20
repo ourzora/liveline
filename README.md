@@ -160,7 +160,7 @@ The component fills its parent container. Set a height on the parent. Pass `data
 
 - **Canvas rendering** — single `<canvas>` element, no DOM nodes per data point
 - **requestAnimationFrame** loop pauses when the tab is hidden
-- **Catmull-Rom splines** for smooth curves through data points
+- **Fritsch-Carlson monotone splines** for smooth curves — no overshoots beyond local min/max
 - **Frame-rate-independent lerp** on value, Y-axis range, badge color, and scrub opacity
 - **ResizeObserver** tracks container size — no per-frame layout reads
 - **Theme derivation** — full palette from one accent color + light/dark mode
