@@ -16,6 +16,7 @@ export function drawLoading(
   palette: LivelinePalette,
   now_ms: number,
   alpha: number = 1,
+  strokeColor?: string,
 ): void {
   const chartW = w - pad.left - pad.right
   const chartH = h - pad.top - pad.bottom
@@ -42,7 +43,7 @@ export function drawLoading(
   ctx.moveTo(pts[0][0], pts[0][1])
   drawSpline(ctx, pts)
 
-  ctx.strokeStyle = palette.line
+  ctx.strokeStyle = strokeColor ?? palette.line
   ctx.lineWidth = palette.lineWidth
   ctx.globalAlpha = breath * alpha
   ctx.lineCap = 'round'

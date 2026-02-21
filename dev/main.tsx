@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Liveline } from 'liveline'
-import type { LivelinePoint } from 'liveline'
+import { Liveline, LivelineCandlestick } from 'liveline'
+import type { LivelinePoint, CandlePoint } from 'liveline'
 
 // --- Data generators ---
 
@@ -37,6 +37,37 @@ const TICK_RATES: { label: string; ms: number }[] = [
 
 const VOLATILITIES: Volatility[] = ['calm', 'normal', 'spiky', 'chaos']
 
+// --- Candle width options ---
+
+const CANDLE_WIDTHS = [
+  { label: '1s', secs: 1 },
+  { label: '2s', secs: 2 },
+  { label: '5s', secs: 5 },
+  { label: '10s', secs: 10 },
+]
+
+/** Aggregate tick data into OHLC candles by time bucket. */
+function aggregateCandles(ticks: LivelinePoint[], width: number): { candles: CandlePoint[]; live: CandlePoint | null } {
+  if (ticks.length === 0) return { candles: [], live: null }
+  const candles: CandlePoint[] = []
+  let slot = Math.floor(ticks[0].time / width) * width
+  let o = ticks[0].value, h = o, l = o, c = o
+  for (let i = 1; i < ticks.length; i++) {
+    const t = ticks[i]
+    if (t.time >= slot + width) {
+      candles.push({ time: slot, open: o, high: h, low: l, close: c })
+      slot = Math.floor(t.time / width) * width
+      o = t.value; h = o; l = o; c = o
+    } else {
+      c = t.value
+      if (c > h) h = c
+      if (c < l) l = c
+    }
+  }
+  // Last incomplete bucket is the live candle
+  return { candles, live: { time: slot, open: o, high: h, low: l, close: c } }
+}
+
 // --- Demo ---
 
 function Demo() {
@@ -65,9 +96,48 @@ function Demo() {
   const [volatility, setVolatility] = useState<Volatility>('normal')
   const [tickRate, setTickRate] = useState(300)
 
+  // Chart type toggle (for transition demo)
+  const [chartType, setChartType] = useState<'line' | 'candle'>('candle')
+
+  // Candlestick state — candles are derived from tick data
+  const [candleSecs, setCandleSecs] = useState(2)
+  const [candles, setCandles] = useState<CandlePoint[]>([])
+  const [liveCandle, setLiveCandle] = useState<CandlePoint | null>(null)
+  const candleSecsRef = useRef(candleSecs)
+  candleSecsRef.current = candleSecs
+  const lastValueRef = useRef(100)
+  const liveCandleRef = useRef<CandlePoint | null>(null)
+  const dataRef = useRef<LivelinePoint[]>([])
+
   const intervalRef = useRef<number>(0)
   const volatilityRef = useRef(volatility)
   volatilityRef.current = volatility
+
+  /** Generate a tick and update candle accumulator from it. */
+  const tickAndAggregate = (pt: LivelinePoint) => {
+    const width = candleSecsRef.current
+    const lc = liveCandleRef.current
+    if (!lc) {
+      const slot = Math.floor(pt.time / width) * width
+      liveCandleRef.current = { time: slot, open: pt.value, high: pt.value, low: pt.value, close: pt.value }
+      setLiveCandle({ ...liveCandleRef.current })
+    } else if (pt.time >= lc.time + width) {
+      // Commit completed candle
+      const committed = { ...lc }
+      setCandles(prev => {
+        const next = [...prev, committed]
+        return next.length > 500 ? next.slice(-500) : next
+      })
+      const slot = Math.floor(pt.time / width) * width
+      liveCandleRef.current = { time: slot, open: pt.value, high: pt.value, low: pt.value, close: pt.value }
+      setLiveCandle({ ...liveCandleRef.current })
+    } else {
+      lc.close = pt.value
+      if (pt.value > lc.high) lc.high = pt.value
+      if (pt.value < lc.low) lc.low = pt.value
+      setLiveCandle({ ...lc })
+    }
+  }
 
   const startLive = useCallback(() => {
     clearInterval(intervalRef.current)
@@ -76,30 +146,43 @@ function Demo() {
     const now = Date.now() / 1000
     const seed: LivelinePoint[] = []
     let v = 100
-    for (let i = 60; i >= 0; i--) {
-      const pt = generatePoint(v, now - i * 0.5, volatilityRef.current)
+    // Seed enough ticks to fill both line and candle views (~500 ticks at 0.3s spacing)
+    for (let i = 500; i >= 0; i--) {
+      const pt = generatePoint(v, now - i * 0.3, volatilityRef.current)
       seed.push(pt)
       v = pt.value
     }
     setData(seed)
+    dataRef.current = seed
     setValue(v)
+    lastValueRef.current = v
+
+    // Aggregate seed ticks into candles
+    const agg = aggregateCandles(seed, candleSecsRef.current)
+    setCandles(agg.candles)
+    setLiveCandle(agg.live)
+    liveCandleRef.current = agg.live ? { ...agg.live } : null
 
     intervalRef.current = window.setInterval(() => {
+      const now = Date.now() / 1000
+      const pt = generatePoint(lastValueRef.current, now, volatilityRef.current)
+      lastValueRef.current = pt.value
+      setValue(pt.value)
       setData(prev => {
-        const now = Date.now() / 1000
-        const lastVal = prev.length > 0 ? prev[prev.length - 1].value : 100
-        const pt = generatePoint(lastVal, now, volatilityRef.current)
-        setValue(pt.value)
         const next = [...prev, pt]
-        return next.length > 500 ? next.slice(-500) : next
+        const trimmed = next.length > 500 ? next.slice(-500) : next
+        dataRef.current = trimmed
+        return trimmed
       })
+      tickAndAggregate(pt)
     }, tickRate)
   }, [tickRate])
 
   useEffect(() => {
     if (scenario === 'loading') {
       setLoading(true)
-      setData([])
+      setData([]); dataRef.current = []
+      setCandles([]); setLiveCandle(null); liveCandleRef.current = null
       clearInterval(intervalRef.current)
       const timer = setTimeout(() => setScenario('live'), 3000)
       return () => clearTimeout(timer)
@@ -107,14 +190,16 @@ function Demo() {
 
     if (scenario === 'loading-hold') {
       setLoading(true)
-      setData([])
+      setData([]); dataRef.current = []
+      setCandles([]); setLiveCandle(null); liveCandleRef.current = null
       clearInterval(intervalRef.current)
       return
     }
 
     if (scenario === 'empty') {
       setLoading(false)
-      setData([])
+      setData([]); dataRef.current = []
+      setCandles([]); setLiveCandle(null); liveCandleRef.current = null
       clearInterval(intervalRef.current)
       return
     }
@@ -129,17 +214,29 @@ function Demo() {
     if (scenario !== 'live') return
     clearInterval(intervalRef.current)
     intervalRef.current = window.setInterval(() => {
+      const now = Date.now() / 1000
+      const pt = generatePoint(lastValueRef.current, now, volatilityRef.current)
+      lastValueRef.current = pt.value
+      setValue(pt.value)
       setData(prev => {
-        const now = Date.now() / 1000
-        const lastVal = prev.length > 0 ? prev[prev.length - 1].value : 100
-        const pt = generatePoint(lastVal, now, volatilityRef.current)
-        setValue(pt.value)
         const next = [...prev, pt]
-        return next.length > 500 ? next.slice(-500) : next
+        const trimmed = next.length > 500 ? next.slice(-500) : next
+        dataRef.current = trimmed
+        return trimmed
       })
+      tickAndAggregate(pt)
     }, tickRate)
     return () => clearInterval(intervalRef.current)
   }, [tickRate, scenario])
+
+  // Re-aggregate candles when candle width changes
+  useEffect(() => {
+    if (scenario !== 'live' || dataRef.current.length === 0) return
+    const agg = aggregateCandles(dataRef.current, candleSecs)
+    setCandles(agg.candles)
+    setLiveCandle(agg.live)
+    liveCandleRef.current = agg.live ? { ...agg.live } : null
+  }, [candleSecs, scenario])
 
   const degenOpts = degen ? { scale: degenScale, downMomentum: degenDown } : undefined
 
@@ -332,6 +429,44 @@ function Demo() {
         <span>window: {windowSecs}s</span>
         <span>tick: {tickRate}ms</span>
         <span>volatility: {volatility}</span>
+      </div>
+
+      {/* Chart type transition */}
+      <h2 style={{ fontSize: 16, fontWeight: 600, marginTop: 32, marginBottom: 4 }}>
+        Candlestick / Line Toggle
+      </h2>
+      <Section label="Type">
+        <Btn active={chartType === 'line'} onClick={() => setChartType('line')}>Line</Btn>
+        <Btn active={chartType === 'candle'} onClick={() => setChartType('candle')}>Candle</Btn>
+        <Sep />
+        <Label text="Candle">
+          {CANDLE_WIDTHS.map(cw => (
+            <Btn key={cw.secs} active={candleSecs === cw.secs} onClick={() => setCandleSecs(cw.secs)}>{cw.label}</Btn>
+          ))}
+        </Label>
+      </Section>
+      <div style={{
+        height: 280,
+        background: 'var(--fg-02)',
+        borderRadius: 12,
+        border: '1px solid var(--fg-06)',
+        padding: 8,
+        overflow: 'hidden',
+      }}>
+        <LivelineCandlestick
+          candles={candles}
+          candleWidth={candleSecs}
+          liveCandle={liveCandle ?? undefined}
+          lineMode={chartType === 'line'}
+          lineData={data}
+          lineValue={value}
+          loading={loading}
+          paused={paused}
+          theme={theme}
+          window={windowSecs}
+          grid={grid}
+          scrub={scrub}
+        />
       </div>
     </div>
   )
