@@ -97,8 +97,25 @@ export interface LivelineProps {
   cursor?: string          // CSS cursor on hover (default: 'crosshair')
   pulse?: boolean          // Pulsing ring on live dot (default: true)
 
+  // Candlestick mode
+  mode?: 'line' | 'candle'       // Chart type (default: 'line')
+  candles?: CandlePoint[]         // OHLC candle data (required when mode='candle')
+  candleWidth?: number            // Seconds per candle (required when mode='candle')
+  liveCandle?: CandlePoint        // Current live candle with real-time OHLC
+  lineMode?: boolean              // Morph candles into line display
+  lineData?: LivelinePoint[]      // Tick-level data for density transition
+  lineValue?: number              // Current tick value for density transition
+
   className?: string
   style?: CSSProperties
+}
+
+export interface CandlePoint {
+  time: number   // unix seconds — candle open time
+  open: number
+  high: number
+  low: number
+  close: number
 }
 
 export interface LivelinePalette {

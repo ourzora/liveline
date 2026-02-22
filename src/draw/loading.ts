@@ -39,6 +39,7 @@ export function drawLoading(
     pts.push([x, y])
   }
 
+  ctx.save()
   ctx.beginPath()
   ctx.moveTo(pts[0][0], pts[0][1])
   drawSpline(ctx, pts)
@@ -49,6 +50,5 @@ export function drawLoading(
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
   ctx.stroke()
-
-  ctx.globalAlpha = 1
+  ctx.restore()
 }

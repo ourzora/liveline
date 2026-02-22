@@ -1,13 +1,6 @@
-import type { ChartLayout, LivelinePalette } from '../types'
-import { drawSpline } from '../math/spline'
+import type { ChartLayout, LivelinePalette, CandlePoint } from '../types'
 
-export interface CandlePoint {
-  time: number   // unix seconds — candle open time
-  open: number
-  high: number
-  low: number
-  close: number
-}
+export type { CandlePoint } from '../types'
 
 const BULL = '#22c55e'
 const BEAR = '#ef4444'
@@ -249,14 +242,11 @@ export function drawCandleCrosshair(
   ctx.restore()
 
   // Tooltip — OHLC + time (matches line chart crosshair patterns)
-  if (opacity < 0.1 || layout.w < 300) return
+  if (opacity < 0.1 || layout.w < 200) return
 
   const isBull = candle.close >= candle.open
   const valueColor = isBull ? BULL : BEAR
 
-  const o = formatValue(candle.open)
-  const hi = formatValue(candle.high)
-  const lo = formatValue(candle.low)
   const cl = formatValue(candle.close)
   const time = formatTime(hoverTime)
 
@@ -265,20 +255,32 @@ export function drawCandleCrosshair(
   ctx.font = '400 13px "SF Mono", Menlo, monospace'
   ctx.textAlign = 'left'
 
-  // Build text parts — spacing is embedded in strings so measureText is authoritative.
-  // 3 spaces between segments, "  ·  " separator before time.
-  const parts: { text: string; color: string }[] = [
-    { text: 'O ', color: palette.gridLabel },
-    { text: o, color: valueColor },
-    { text: '   H ', color: palette.gridLabel },
-    { text: hi, color: valueColor },
-    { text: '   L ', color: palette.gridLabel },
-    { text: lo, color: valueColor },
-    { text: '   C ', color: palette.gridLabel },
-    { text: cl, color: valueColor },
-    { text: '  ·  ', color: palette.gridLabel },
-    { text: time, color: palette.gridLabel },
-  ]
+  // Full OHLC at ≥400px, condensed (close + time) at smaller sizes
+  let parts: { text: string; color: string }[]
+  if (layout.w >= 400) {
+    const o = formatValue(candle.open)
+    const hi = formatValue(candle.high)
+    const lo = formatValue(candle.low)
+    parts = [
+      { text: 'O ', color: palette.gridLabel },
+      { text: o, color: valueColor },
+      { text: '   H ', color: palette.gridLabel },
+      { text: hi, color: valueColor },
+      { text: '   L ', color: palette.gridLabel },
+      { text: lo, color: valueColor },
+      { text: '   C ', color: palette.gridLabel },
+      { text: cl, color: valueColor },
+      { text: '  \u00b7  ', color: palette.gridLabel },
+      { text: time, color: palette.gridLabel },
+    ]
+  } else {
+    parts = [
+      { text: 'C ', color: palette.gridLabel },
+      { text: cl, color: valueColor },
+      { text: '  \u00b7  ', color: palette.gridLabel },
+      { text: time, color: palette.gridLabel },
+    ]
+  }
 
   // Measure
   let totalW = 0
@@ -313,112 +315,6 @@ export function drawCandleCrosshair(
     ctx.fillStyle = parts[i].color
     ctx.fillText(parts[i].text, cx, ty)
     cx += widths[i]
-  }
-
-  ctx.restore()
-}
-
-/**
- * Draw spline + fill through candle close prices (line chart overlay).
- * Fades in with lineModeProg during the candle→line morph.
- * When tickPts + densityProg are provided, cross-blends from the sparse
- * candle-close spline to the high-density tick spline.
- */
-export function drawLineOverlay(
-  ctx: CanvasRenderingContext2D,
-  layout: ChartLayout,
-  palette: LivelinePalette,
-  candles: CandlePoint[],
-  candleWidthSecs: number,
-  lineModeProg: number,
-  scrubX: number,
-  scrubDim: number,
-  tipX?: number,
-  tipY?: number,
-  tickPts?: [number, number][],
-  densityProg?: number,
-) {
-  if (candles.length < 2 || lineModeProg < 0.01) return
-
-  const { toX, toY, h, pad, chartW, chartH } = layout
-
-  // Clamp Y to chart bounds (matches real line chart — prevents spline artifacts during range transitions)
-  const yMin = pad.top
-  const yMax = h - pad.bottom
-  const clampY = (y: number) => Math.max(yMin, Math.min(yMax, y))
-
-  const pts: [number, number][] = candles.map(c => [
-    toX(c.time + candleWidthSecs / 2),
-    clampY(toY(c.close)),
-  ])
-  if (tipX !== undefined && tipY !== undefined) {
-    pts.push([tipX, clampY(tipY)])
-  }
-
-  const baseAlpha = ctx.globalAlpha
-  const alpha = lineModeProg
-  const dp = densityProg ?? 0
-  const hasTickPts = tickPts && tickPts.length >= 2
-
-  const renderSpline = (points: [number, number][], a: number) => {
-    if (points.length < 2 || a < 0.01) return
-    ctx.globalAlpha = baseAlpha * a
-    const grad = ctx.createLinearGradient(0, pad.top, 0, h - pad.bottom)
-    grad.addColorStop(0, palette.fillTop)
-    grad.addColorStop(1, palette.fillBottom)
-    ctx.beginPath()
-    ctx.moveTo(points[0][0], h - pad.bottom)
-    ctx.lineTo(points[0][0], points[0][1])
-    drawSpline(ctx, points)
-    ctx.lineTo(points[points.length - 1][0], h - pad.bottom)
-    ctx.closePath()
-    ctx.fillStyle = grad
-    ctx.fill()
-    ctx.globalAlpha = baseAlpha * a
-    ctx.beginPath()
-    ctx.moveTo(points[0][0], points[0][1])
-    drawSpline(ctx, points)
-    ctx.strokeStyle = palette.line
-    ctx.lineWidth = palette.lineWidth
-    ctx.lineJoin = 'round'
-    ctx.lineCap = 'round'
-    ctx.stroke()
-    ctx.globalAlpha = baseAlpha
-  }
-
-  const renderOverlay = () => {
-    if (dp > 0.01 && hasTickPts) {
-      // Single spline through blended tick points — Y values already
-      // interpolated between candle-close and real tick by densityProg,
-      // so the line smoothly gains detail without any cross-fade.
-      renderSpline(tickPts!, alpha)
-    } else {
-      renderSpline(pts, alpha)
-    }
-  }
-
-  ctx.save()
-  ctx.beginPath()
-  ctx.rect(pad.left - 1, pad.top, chartW + 2, chartH)
-  ctx.clip()
-
-  if (scrubDim > 0.01 && scrubX > 0) {
-    ctx.save()
-    ctx.beginPath()
-    ctx.rect(0, 0, scrubX, h)
-    ctx.clip()
-    renderOverlay()
-    ctx.restore()
-
-    ctx.save()
-    ctx.beginPath()
-    ctx.rect(scrubX, 0, layout.w - scrubX, h)
-    ctx.clip()
-    ctx.globalAlpha = baseAlpha * (1 - scrubDim * 0.6)
-    renderOverlay()
-    ctx.restore()
-  } else {
-    renderOverlay()
   }
 
   ctx.restore()

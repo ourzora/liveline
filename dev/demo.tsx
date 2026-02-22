@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Liveline } from 'liveline'
-import type { LivelinePoint } from 'liveline'
+import type { LivelinePoint, CandlePoint } from 'liveline'
 
 // --- Data generators ---
 
@@ -11,12 +11,32 @@ function generatePoint(prev: number, time: number, volatility: Volatility): Live
   const v: Record<Volatility, number> = { calm: 0.15, normal: 0.8, spiky: 3, chaos: 8 }
   const bias: Record<Volatility, number> = { calm: 0.49, normal: 0.48, spiky: 0.47, chaos: 0.45 }
   const scale = v[volatility]
-  // Occasional large spikes in spiky/chaos modes
   const spike = (volatility === 'spiky' || volatility === 'chaos') && Math.random() < 0.08
     ? (Math.random() - 0.5) * scale * 3
     : 0
   const delta = (Math.random() - bias[volatility]) * scale + spike
   return { time, value: prev + delta }
+}
+
+/** Aggregate tick data into OHLC candles by time bucket. */
+function aggregateCandles(ticks: LivelinePoint[], width: number): { candles: CandlePoint[]; live: CandlePoint | null } {
+  if (ticks.length === 0) return { candles: [], live: null }
+  const candles: CandlePoint[] = []
+  let slot = Math.floor(ticks[0].time / width) * width
+  let o = ticks[0].value, h = o, l = o, c = o
+  for (let i = 1; i < ticks.length; i++) {
+    const t = ticks[i]
+    if (t.time >= slot + width) {
+      candles.push({ time: slot, open: o, high: h, low: l, close: c })
+      slot = Math.floor(t.time / width) * width
+      o = t.value; h = o; l = o; c = o
+    } else {
+      c = t.value
+      if (c > h) h = c
+      if (c < l) l = c
+    }
+  }
+  return { candles, live: { time: slot, open: o, high: h, low: l, close: c } }
 }
 
 // --- Constants ---
@@ -37,6 +57,13 @@ const TICK_RATES: { label: string; ms: number }[] = [
 
 const VOLATILITIES: Volatility[] = ['calm', 'normal', 'spiky', 'chaos']
 
+const CANDLE_WIDTHS = [
+  { label: '1s', secs: 1 },
+  { label: '2s', secs: 2 },
+  { label: '5s', secs: 5 },
+  { label: '10s', secs: 10 },
+]
+
 // --- Demo ---
 
 function Demo() {
@@ -46,28 +73,51 @@ function Demo() {
   const [paused, setPaused] = useState(false)
   const [scenario, setScenario] = useState<'loading' | 'loading-hold' | 'live' | 'empty'>('loading')
 
-  // Prop controls
   const [windowSecs, setWindowSecs] = useState(30)
-  const [degen, setDegen] = useState(false)
-  const [degenScale, setDegenScale] = useState(1)
-  const [degenDown, setDegenDown] = useState(false)
-  const [fill, setFill] = useState(true)
-  const [grid, setGrid] = useState(true)
-  const [badge, setBadge] = useState(true)
-  const [badgeVariant, setBadgeVariant] = useState<'default' | 'minimal'>('default')
-  const [momentum, setMomentum] = useState(true)
-  const [pulse, setPulse] = useState(true)
-  const [scrub, setScrub] = useState(true)
-  const [exaggerate, setExaggerate] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const [grid, setGrid] = useState(true)
+  const [scrub, setScrub] = useState(true)
 
-  // Data controls
   const [volatility, setVolatility] = useState<Volatility>('normal')
   const [tickRate, setTickRate] = useState(300)
 
+  const [chartType, setChartType] = useState<'line' | 'candle'>('candle')
+  const [candleSecs, setCandleSecs] = useState(2)
+  const [candles, setCandles] = useState<CandlePoint[]>([])
+  const [liveCandle, setLiveCandle] = useState<CandlePoint | null>(null)
+
+  const candleSecsRef = useRef(candleSecs)
+  candleSecsRef.current = candleSecs
+  const lastValueRef = useRef(100)
+  const liveCandleRef = useRef<CandlePoint | null>(null)
+  const dataRef = useRef<LivelinePoint[]>([])
   const intervalRef = useRef<number>(0)
   const volatilityRef = useRef(volatility)
   volatilityRef.current = volatility
+
+  const tickAndAggregate = (pt: LivelinePoint) => {
+    const width = candleSecsRef.current
+    const lc = liveCandleRef.current
+    if (!lc) {
+      const slot = Math.floor(pt.time / width) * width
+      liveCandleRef.current = { time: slot, open: pt.value, high: pt.value, low: pt.value, close: pt.value }
+      setLiveCandle({ ...liveCandleRef.current })
+    } else if (pt.time >= lc.time + width) {
+      const committed = { ...lc }
+      setCandles(prev => {
+        const next = [...prev, committed]
+        return next.length > 500 ? next.slice(-500) : next
+      })
+      const slot = Math.floor(pt.time / width) * width
+      liveCandleRef.current = { time: slot, open: pt.value, high: pt.value, low: pt.value, close: pt.value }
+      setLiveCandle({ ...liveCandleRef.current })
+    } else {
+      lc.close = pt.value
+      if (pt.value > lc.high) lc.high = pt.value
+      if (pt.value < lc.low) lc.low = pt.value
+      setLiveCandle({ ...lc })
+    }
+  }
 
   const startLive = useCallback(() => {
     clearInterval(intervalRef.current)
@@ -76,30 +126,41 @@ function Demo() {
     const now = Date.now() / 1000
     const seed: LivelinePoint[] = []
     let v = 100
-    for (let i = 60; i >= 0; i--) {
-      const pt = generatePoint(v, now - i * 0.5, volatilityRef.current)
+    for (let i = 500; i >= 0; i--) {
+      const pt = generatePoint(v, now - i * 0.3, volatilityRef.current)
       seed.push(pt)
       v = pt.value
     }
     setData(seed)
+    dataRef.current = seed
     setValue(v)
+    lastValueRef.current = v
+
+    const agg = aggregateCandles(seed, candleSecsRef.current)
+    setCandles(agg.candles)
+    setLiveCandle(agg.live)
+    liveCandleRef.current = agg.live ? { ...agg.live } : null
 
     intervalRef.current = window.setInterval(() => {
+      const now = Date.now() / 1000
+      const pt = generatePoint(lastValueRef.current, now, volatilityRef.current)
+      lastValueRef.current = pt.value
+      setValue(pt.value)
       setData(prev => {
-        const now = Date.now() / 1000
-        const lastVal = prev.length > 0 ? prev[prev.length - 1].value : 100
-        const pt = generatePoint(lastVal, now, volatilityRef.current)
-        setValue(pt.value)
         const next = [...prev, pt]
-        return next.length > 500 ? next.slice(-500) : next
+        const trimmed = next.length > 500 ? next.slice(-500) : next
+        dataRef.current = trimmed
+        return trimmed
       })
+      tickAndAggregate(pt)
     }, tickRate)
   }, [tickRate])
 
   useEffect(() => {
     if (scenario === 'loading') {
       setLoading(true)
-      setData([])
+      setData([]); dataRef.current = []
+      setCandles([]); setLiveCandle(null); liveCandleRef.current = null
       clearInterval(intervalRef.current)
       const timer = setTimeout(() => setScenario('live'), 3000)
       return () => clearTimeout(timer)
@@ -107,41 +168,50 @@ function Demo() {
 
     if (scenario === 'loading-hold') {
       setLoading(true)
-      setData([])
+      setData([]); dataRef.current = []
+      setCandles([]); setLiveCandle(null); liveCandleRef.current = null
       clearInterval(intervalRef.current)
       return
     }
 
     if (scenario === 'empty') {
       setLoading(false)
-      setData([])
+      setData([]); dataRef.current = []
+      setCandles([]); setLiveCandle(null); liveCandleRef.current = null
       clearInterval(intervalRef.current)
       return
     }
 
-    // scenario === 'live'
     startLive()
     return () => clearInterval(intervalRef.current)
   }, [scenario, startLive])
 
-  // Restart interval when tick rate changes while live
   useEffect(() => {
     if (scenario !== 'live') return
     clearInterval(intervalRef.current)
     intervalRef.current = window.setInterval(() => {
+      const now = Date.now() / 1000
+      const pt = generatePoint(lastValueRef.current, now, volatilityRef.current)
+      lastValueRef.current = pt.value
+      setValue(pt.value)
       setData(prev => {
-        const now = Date.now() / 1000
-        const lastVal = prev.length > 0 ? prev[prev.length - 1].value : 100
-        const pt = generatePoint(lastVal, now, volatilityRef.current)
-        setValue(pt.value)
         const next = [...prev, pt]
-        return next.length > 500 ? next.slice(-500) : next
+        const trimmed = next.length > 500 ? next.slice(-500) : next
+        dataRef.current = trimmed
+        return trimmed
       })
+      tickAndAggregate(pt)
     }, tickRate)
     return () => clearInterval(intervalRef.current)
   }, [tickRate, scenario])
 
-  const degenOpts = degen ? { scale: degenScale, downMomentum: degenDown } : undefined
+  useEffect(() => {
+    if (scenario !== 'live' || dataRef.current.length === 0) return
+    const agg = aggregateCandles(dataRef.current, candleSecs)
+    setCandles(agg.candles)
+    setLiveCandle(agg.live)
+    liveCandleRef.current = agg.live ? { ...agg.live } : null
+  }, [candleSecs, scenario])
 
   const isDark = theme === 'dark'
   const fgBase = isDark ? '255,255,255' : '0,0,0'
@@ -164,11 +234,10 @@ function Demo() {
       '--fg-45': `rgba(${fgBase},0.45)`,
     } as React.CSSProperties}>
       <h1 style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>
-        Liveline Dev
+        Liveline Candlestick
       </h1>
-      <p style={{ fontSize: 12, color: 'var(--fg-30)', marginBottom: 20 }}>Stress-test playground</p>
+      <p style={{ fontSize: 12, color: 'var(--fg-30)', marginBottom: 20 }}>Candlestick chart with line mode morph</p>
 
-      {/* Scenario row */}
       <Section label="State">
         <Btn active={scenario === 'loading'} onClick={() => setScenario('loading')}>Loading → Live</Btn>
         <Btn active={scenario === 'loading-hold'} onClick={() => setScenario('loading-hold')}>Loading</Btn>
@@ -180,7 +249,17 @@ function Demo() {
         </Btn>
       </Section>
 
-      {/* Data controls */}
+      <Section label="Chart">
+        <Btn active={chartType === 'candle'} onClick={() => setChartType('candle')}>Candle</Btn>
+        <Btn active={chartType === 'line'} onClick={() => setChartType('line')}>Line</Btn>
+        <Sep />
+        <Label text="Width">
+          {CANDLE_WIDTHS.map(cw => (
+            <Btn key={cw.secs} active={candleSecs === cw.secs} onClick={() => setCandleSecs(cw.secs)}>{cw.label}</Btn>
+          ))}
+        </Label>
+      </Section>
+
       <Section label="Data">
         <Label text="Volatility">
           {VOLATILITIES.map(v => (
@@ -195,7 +274,6 @@ function Demo() {
         </Label>
       </Section>
 
-      {/* Time window */}
       <Section label="Window">
         {TIME_WINDOWS.map(w => (
           <Btn key={w.secs} active={windowSecs === w.secs} onClick={() => setWindowSecs(w.secs)}>
@@ -204,43 +282,15 @@ function Demo() {
         ))}
       </Section>
 
-      {/* Feature toggles */}
       <Section label="Features">
         <Btn active={theme === 'dark'} onClick={() => setTheme('dark')}>Dark</Btn>
         <Btn active={theme === 'light'} onClick={() => setTheme('light')}>Light</Btn>
         <Sep />
         <Toggle on={grid} onToggle={setGrid}>Grid</Toggle>
-        <Toggle on={fill} onToggle={setFill}>Fill</Toggle>
-        <Toggle on={badge} onToggle={setBadge}>Badge</Toggle>
-        <Toggle on={momentum} onToggle={setMomentum}>Momentum</Toggle>
-        <Toggle on={pulse} onToggle={setPulse}>Pulse</Toggle>
         <Toggle on={scrub} onToggle={setScrub}>Scrub</Toggle>
-        <Toggle on={exaggerate} onToggle={setExaggerate}>Exaggerate</Toggle>
-        <Sep />
-        <Label text="Badge style">
-          <Btn active={badgeVariant === 'default'} onClick={() => setBadgeVariant('default')}>Default</Btn>
-          <Btn active={badgeVariant === 'minimal'} onClick={() => setBadgeVariant('minimal')}>Minimal</Btn>
-        </Label>
       </Section>
 
-      {/* Degen */}
-      <Section label="Degen">
-        <Toggle on={degen} onToggle={setDegen}>Enable</Toggle>
-        {degen && (
-          <>
-            <Sep />
-            <Toggle on={degenDown} onToggle={setDegenDown}>Down momentum</Toggle>
-            <Sep />
-            <Label text="Scale">
-              {[0.5, 1, 2, 4].map(s => (
-                <Btn key={s} active={degenScale === s} onClick={() => setDegenScale(s)}>{s}x</Btn>
-              ))}
-            </Label>
-          </>
-        )}
-      </Section>
-
-      {/* Chart */}
+      {/* Main chart */}
       <div style={{
         height: 320,
         background: 'var(--fg-02)',
@@ -251,27 +301,25 @@ function Demo() {
         marginTop: 16,
       }}>
         <Liveline
+          mode="candle"
           data={data}
           value={value}
-          theme={theme}
-          window={windowSecs}
+          candles={candles}
+          candleWidth={candleSecs}
+          liveCandle={liveCandle ?? undefined}
+          lineMode={chartType === 'line'}
+          lineData={data}
+          lineValue={value}
           loading={loading}
           paused={paused}
-          badge={badge}
-          badgeVariant={badgeVariant}
-          momentum={momentum}
-          fill={fill}
+          theme={theme}
+          window={windowSecs}
           grid={grid}
           scrub={scrub}
-          pulse={pulse}
-          exaggerate={exaggerate}
-          degen={degenOpts}
-          windows={TIME_WINDOWS}
-          onWindowChange={setWindowSecs}
         />
       </div>
 
-      {/* Smaller sizes */}
+      {/* Size variants */}
       <p style={{ fontSize: 12, color: 'var(--fg-30)', marginTop: 24, marginBottom: 8 }}>Size variants</p>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
         {[
@@ -293,21 +341,21 @@ function Demo() {
               overflow: 'hidden',
             }}>
               <Liveline
+                mode="candle"
                 data={data}
                 value={value}
-                theme={theme}
-                window={windowSecs}
+                candles={candles}
+                candleWidth={candleSecs}
+                liveCandle={liveCandle ?? undefined}
+                lineMode={chartType === 'line'}
+                lineData={data}
+                lineValue={value}
                 loading={loading}
                 paused={paused}
-                badge={badge && size.w >= 200}
-                badgeVariant={badgeVariant}
-                momentum={momentum && size.w >= 200}
-                fill={fill}
+                theme={theme}
+                window={windowSecs}
                 grid={grid && size.w >= 200}
                 scrub={scrub}
-                pulse={pulse}
-                exaggerate={exaggerate}
-                degen={degenOpts}
               />
             </div>
           </div>
@@ -324,13 +372,16 @@ function Demo() {
         gap: 16,
         flexWrap: 'wrap',
       }}>
-        <span>points: {data.length}</span>
+        <span>ticks: {data.length}</span>
+        <span>candles: {candles.length}</span>
         <span>loading: {String(loading)}</span>
         <span>paused: {String(paused)}</span>
         <span>value: {value.toFixed(2)}</span>
         <span>window: {windowSecs}s</span>
+        <span>candle: {candleSecs}s</span>
         <span>tick: {tickRate}ms</span>
         <span>volatility: {volatility}</span>
+        <span>mode: {chartType}</span>
       </div>
     </div>
   )

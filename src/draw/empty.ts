@@ -27,9 +27,11 @@ export function drawEmpty(
   const cx = pad.left + chartW / 2
 
   const text = emptyText ?? 'No data to display'
-  ctx.font = '400 12px system-ui, -apple-system, sans-serif'
 
   const amplitude = chartH * LOADING_AMPLITUDE_RATIO
+
+  ctx.save()
+  ctx.font = '400 12px system-ui, -apple-system, sans-serif'
 
   // Measure text to know gap size
   const textW = ctx.measureText(text).width
@@ -86,7 +88,5 @@ export function drawEmpty(
   ctx.fillStyle = palette.gridLabel
   ctx.fillText(text, cx, centerY)
 
-  ctx.globalAlpha = 1
-  ctx.textAlign = 'start'
-  ctx.textBaseline = 'alphabetic'
+  ctx.restore()
 }

@@ -1,11 +1,11 @@
 import { useRef, useEffect, useCallback } from 'react'
-import type { LivelinePoint, LivelinePalette, Momentum, ReferenceLine, HoverPoint, Padding, ChartLayout, OrderbookData, DegenOptions, BadgeVariant } from './types'
+import type { LivelinePoint, LivelinePalette, Momentum, ReferenceLine, HoverPoint, Padding, ChartLayout, OrderbookData, DegenOptions, BadgeVariant, CandlePoint } from './types'
 import { lerp } from './math/lerp'
 import { computeRange } from './math/range'
 import { detectMomentum } from './math/momentum'
 import { interpolateAtTime } from './math/interpolate'
 import { getDpr, applyDpr } from './canvas/dpr'
-import { drawFrame, FADE_EDGE_WIDTH } from './draw'
+import { drawFrame, drawCandleFrame, FADE_EDGE_WIDTH } from './draw'
 import { drawLoading } from './draw/loading'
 import { drawEmpty } from './draw/empty'
 import { createOrderbookState } from './draw/orderbook'
@@ -43,6 +43,15 @@ interface EngineConfig {
   loading?: boolean
   paused?: boolean
   emptyText?: string
+
+  // Candlestick mode
+  mode: 'line' | 'candle'
+  candles?: CandlePoint[]
+  candleWidth?: number
+  liveCandle?: CandlePoint
+  lineMode?: boolean
+  lineData?: LivelinePoint[]
+  lineValue?: number
 }
 
 interface BadgeEls {
@@ -74,6 +83,18 @@ const PAUSE_PROGRESS_SPEED = 0.12
 const PAUSE_CATCHUP_SPEED = 0.08
 const PAUSE_CATCHUP_SPEED_FAST = 0.22
 const LOADING_ALPHA_SPEED = 0.14
+
+// --- Candle-specific constants ---
+const CANDLE_LERP_SPEED = 0.25
+const CANDLE_WIDTH_TRANS_MS = 300
+const LINE_MORPH_MS = 500
+const LINE_DENSITY_MS = 350
+const LINE_LERP_BASE = 0.08
+const LINE_ADAPTIVE_BOOST = 0.2
+const LINE_SNAP_THRESHOLD = 0.001
+const RANGE_LERP_SPEED = 0.15
+const RANGE_ADAPTIVE_BOOST = 0.2
+const CANDLE_BUFFER = 0.05
 
 // --- Extracted helper functions (pure computation, called inside draw loop) ---
 
@@ -372,6 +393,178 @@ function updateBadgeDOM(
   return badgeY
 }
 
+// --- Candle-specific helper functions ---
+
+function computeCandleRange(
+  candles: CandlePoint[],
+): { min: number; max: number } {
+  let min = Infinity
+  let max = -Infinity
+  for (const c of candles) {
+    if (c.low < min) min = c.low
+    if (c.high > max) max = c.high
+  }
+  if (!isFinite(min) || !isFinite(max)) return { min: 99, max: 101 }
+  const range = max - min
+  const margin = range * 0.12
+  const minRange = range * 0.1 || 0.4
+  if (range < minRange) {
+    const mid = (min + max) / 2
+    return { min: mid - minRange / 2, max: mid + minRange / 2 }
+  }
+  return { min: min - margin, max: max + margin }
+}
+
+function computeCloseRange(
+  candles: CandlePoint[],
+  smoothClose?: number,
+): { min: number; max: number } {
+  let min = Infinity
+  let max = -Infinity
+  for (const c of candles) {
+    if (c.close < min) min = c.close
+    if (c.close > max) max = c.close
+  }
+  if (smoothClose !== undefined) {
+    if (smoothClose < min) min = smoothClose
+    if (smoothClose > max) max = smoothClose
+  }
+  if (!isFinite(min) || !isFinite(max)) return { min: 99, max: 101 }
+  const range = max - min
+  const margin = range * 0.12
+  const minRange = range * 0.1 || 0.4
+  if (range < minRange) {
+    const mid = (min + max) / 2
+    return { min: mid - minRange / 2, max: mid + minRange / 2 }
+  }
+  return { min: min - margin, max: max + margin }
+}
+
+function candleAtX(
+  candles: CandlePoint[],
+  hoverX: number,
+  candleWidth: number,
+  layout: ChartLayout,
+): CandlePoint | null {
+  const time = layout.leftEdge + ((hoverX - layout.pad.left) / layout.chartW) * (layout.rightEdge - layout.leftEdge)
+  let lo = 0
+  let hi = candles.length - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    const c = candles[mid]
+    if (time < c.time) hi = mid - 1
+    else if (time >= c.time + candleWidth) lo = mid + 1
+    else return c
+  }
+  return null
+}
+
+/** Smooth Y range for candle mode — adaptive speed, no target tracking. */
+function updateCandleRange(
+  computedRange: { min: number; max: number },
+  rangeInited: boolean,
+  displayMin: number,
+  displayMax: number,
+  isTransitioning: boolean,
+  windowTransProgress: number,
+  wt: { rangeFromMin: number; rangeFromMax: number; rangeToMin: number; rangeToMax: number },
+  chartH: number,
+  dt: number,
+): { minVal: number; maxVal: number; valRange: number; displayMin: number; displayMax: number; rangeInited: boolean } {
+  if (!rangeInited) {
+    return {
+      minVal: computedRange.min, maxVal: computedRange.max,
+      valRange: (computedRange.max - computedRange.min) || 0.001,
+      displayMin: computedRange.min, displayMax: computedRange.max,
+      rangeInited: true,
+    }
+  }
+
+  if (isTransitioning) {
+    displayMin = wt.rangeFromMin + (wt.rangeToMin - wt.rangeFromMin) * windowTransProgress
+    displayMax = wt.rangeFromMax + (wt.rangeToMax - wt.rangeFromMax) * windowTransProgress
+  } else {
+    const curRange = displayMax - displayMin || 1
+    const gapMin = Math.abs(displayMin - computedRange.min)
+    const gapMax = Math.abs(displayMax - computedRange.max)
+    const gapRatio = Math.min((gapMin + gapMax) / curRange, 1)
+    const speed = RANGE_LERP_SPEED + (1 - gapRatio) * RANGE_ADAPTIVE_BOOST
+
+    displayMin = lerp(displayMin, computedRange.min, speed, dt)
+    displayMax = lerp(displayMax, computedRange.max, speed, dt)
+    const pxThreshold = 0.5 * curRange / chartH || 0.001
+    if (Math.abs(displayMin - computedRange.min) < pxThreshold) displayMin = computedRange.min
+    if (Math.abs(displayMax - computedRange.max) < pxThreshold) displayMax = computedRange.max
+  }
+
+  return {
+    minVal: displayMin, maxVal: displayMax,
+    valRange: (displayMax - displayMin) || 0.001,
+    displayMin, displayMax,
+    rangeInited: true,
+  }
+}
+
+/** Candle window transition — uses candle data instead of line points. */
+function updateCandleWindowTransition(
+  targetWindowSecs: number,
+  wt: { from: number; to: number; startMs: number; rangeFromMin: number; rangeFromMax: number; rangeToMin: number; rangeToMax: number },
+  displayWindow: number,
+  displayMin: number,
+  displayMax: number,
+  now_ms: number,
+  now: number,
+  candles: CandlePoint[],
+  liveCandle: CandlePoint | undefined,
+  candleWidth: number,
+  buffer: number,
+): { windowSecs: number; windowTransProgress: number } {
+  if (wt.to !== targetWindowSecs) {
+    wt.from = displayWindow
+    wt.to = targetWindowSecs
+    wt.startMs = now_ms
+    wt.rangeFromMin = displayMin
+    wt.rangeFromMax = displayMax
+    const targetRightEdge = now + targetWindowSecs * buffer
+    const targetLeftEdge = targetRightEdge - targetWindowSecs
+    const targetVisible: CandlePoint[] = []
+    for (const c of candles) {
+      if (c.time + candleWidth >= targetLeftEdge && c.time <= targetRightEdge) {
+        targetVisible.push(c)
+      }
+    }
+    if (liveCandle && liveCandle.time + candleWidth >= targetLeftEdge && liveCandle.time <= targetRightEdge) {
+      targetVisible.push(liveCandle)
+    }
+    if (targetVisible.length > 0) {
+      const tr = computeCandleRange(targetVisible)
+      wt.rangeToMin = tr.min
+      wt.rangeToMax = tr.max
+    }
+  }
+
+  let windowTransProgress = 0
+  let resultWindow: number
+  if (wt.startMs === 0) {
+    resultWindow = targetWindowSecs
+  } else {
+    const elapsed = now_ms - wt.startMs
+    const t = Math.min(elapsed / WINDOW_TRANSITION_MS, 1)
+    const eased = (1 - Math.cos(t * Math.PI)) / 2
+    windowTransProgress = eased
+    const logFrom = Math.log(wt.from)
+    const logTo = Math.log(wt.to)
+    resultWindow = Math.exp(logFrom + (logTo - logFrom) * eased)
+    if (t >= 1) {
+      resultWindow = targetWindowSecs
+      wt.startMs = 0
+      windowTransProgress = 0
+    }
+  }
+
+  return { windowSecs: resultWindow, windowTransProgress }
+}
+
 export function useLivelineEngine(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   containerRef: React.RefObject<HTMLDivElement | null>,
@@ -432,6 +625,37 @@ export function useLivelineEngine(
 
   // Loading ↔ empty crossfade
   const loadingAlphaRef = useRef(config.loading ? 1 : 0)
+
+  // --- Candle mode refs (only used when mode='candle') ---
+  const displayCandleRef = useRef<CandlePoint | null>(null)
+  const liveBirthAlphaRef = useRef(1)
+  const liveBullRef = useRef(0.5)
+  const lineSmoothCloseRef = useRef(0)
+  const lineSmoothInitedRef = useRef(false)
+  const lineModeProgRef = useRef(0)
+  const lineModeTransRef = useRef({ startMs: 0, from: 0, to: 0 })
+  const lineDensityProgRef = useRef(0)
+  const lineDensityTransRef = useRef({ startMs: 0, from: 0, to: 0 })
+  const lineTickSmoothRef = useRef(0)
+  const lineTickSmoothInitedRef = useRef(false)
+  const candleWidthTransRef = useRef({
+    fromWidth: config.candleWidth ?? 1,
+    toWidth: config.candleWidth ?? 1,
+    startMs: 0,
+    rangeFromMin: 0, rangeFromMax: 0,
+    rangeToMin: 0, rangeToMax: 0,
+    oldCandles: [] as CandlePoint[],
+    oldWidth: config.candleWidth ?? 1,
+  })
+  const prevCandleDataRef = useRef({ candles: [] as CandlePoint[], width: config.candleWidth ?? 1 })
+  const pausedCandlesRef = useRef<CandlePoint[] | null>(null)
+  const pausedLiveRef = useRef<CandlePoint | null>(null)
+  const pausedLineDataRef = useRef<LivelinePoint[] | null>(null)
+  const pausedLineValueRef = useRef<number | null>(null)
+  const lastCandlesRef = useRef<CandlePoint[]>([])
+  const lastLiveRef = useRef<CandlePoint | null>(null)
+  const lastLineDataStashRef = useRef<LivelinePoint[]>([])
+  const lastLineValueStashRef = useRef<number | undefined>(undefined)
 
   // Create badge DOM elements (once, appended to container)
   useEffect(() => {
@@ -549,7 +773,8 @@ export function useLivelineEngine(
     }
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
-  }, [])  // draw is stable (useCallback with no deps that change)
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- draw is identity-stable (useCallback dep is a ref)
+  }, [])
 
   // rAF draw loop
   const draw = useCallback(() => {
@@ -598,17 +823,34 @@ export function useLivelineEngine(
     // Reduced motion: use speed=1 to skip all lerps (instant snap)
     const noMotion = reducedMotionRef.current
 
-    // Snapshot data when pause starts, use snapshot while paused
-    // so consumer-side pruning can't erode the visible line
-    if (cfg.paused && pausedDataRef.current === null && cfg.data.length >= 2) {
-      pausedDataRef.current = cfg.data.slice()
-    }
-    if (!cfg.paused) {
-      pausedDataRef.current = null
+    // --- Mode-specific pause data snapshot ---
+    const isCandle = cfg.mode === 'candle'
+
+    if (isCandle) {
+      if (cfg.paused && pausedCandlesRef.current === null && (cfg.candles?.length ?? 0) > 0) {
+        pausedCandlesRef.current = cfg.candles!.slice()
+        pausedLiveRef.current = cfg.liveCandle ?? null
+        pausedLineDataRef.current = cfg.lineData?.slice() ?? null
+        pausedLineValueRef.current = cfg.lineValue ?? null
+      }
+      if (!cfg.paused) {
+        pausedCandlesRef.current = null
+        pausedLiveRef.current = null
+        pausedLineDataRef.current = null
+        pausedLineValueRef.current = null
+      }
+    } else {
+      if (cfg.paused && pausedDataRef.current === null && cfg.data.length >= 2) {
+        pausedDataRef.current = cfg.data.slice()
+      }
+      if (!cfg.paused) {
+        pausedDataRef.current = null
+      }
     }
 
-    const points = pausedDataRef.current ?? cfg.data
-    const hasData = points.length >= 2
+    const points = isCandle ? ([] as LivelinePoint[]) : (pausedDataRef.current ?? cfg.data)
+    const effectiveCandles = isCandle ? (pausedCandlesRef.current ?? (cfg.candles ?? [])) : ([] as CandlePoint[])
+    const hasData = isCandle ? effectiveCandles.length >= 2 : points.length >= 2
     const pad = cfg.padding
     const chartH = h - pad.top - pad.bottom
 
@@ -655,17 +897,45 @@ export function useLivelineEngine(
 
     // Data stash for reverse morph — keep drawing chart while it morphs back
     // to the squiggly shape (identical to loading/empty line at reveal=0)
-    const useStash = !hasData && chartReveal > 0.005 && lastDataRef.current.length >= 2
-    if (hasData) {
-      lastDataRef.current = points
+    let useStash: boolean
+    if (isCandle) {
+      useStash = !hasData && chartReveal > 0.005 && lastCandlesRef.current.length > 0
+      // Candle stash updated inside candle pipeline after computing visible
+    } else {
+      useStash = !hasData && chartReveal > 0.005 && lastDataRef.current.length >= 2
+      if (hasData) lastDataRef.current = points
+    }
+
+    // Update lineModeProg even during early return — prevents the
+    // transition from freezing when the user toggles lineMode while
+    // in loading or empty state. Without this, lineModeProg stays at
+    // its pre-loading value and causes an accent-colored line flash
+    // when data arrives (BUG #3).
+    if (isCandle) {
+      const lmt = lineModeTransRef.current
+      const lineModeTarget = cfg.lineMode ? 1 : 0
+      if (lmt.to !== lineModeTarget) {
+        lmt.from = lineModeProgRef.current
+        lmt.to = lineModeTarget
+        lmt.startMs = now_ms
+      }
+      if (lmt.startMs > 0) {
+        const elapsed = now_ms - lmt.startMs
+        const t = Math.min(elapsed / LINE_MORPH_MS, 1)
+        lineModeProgRef.current = lmt.from + (lmt.to - lmt.from) * ((1 - Math.cos(t * Math.PI)) / 2)
+        if (t >= 1) { lineModeProgRef.current = lmt.to; lmt.startMs = 0 }
+      } else {
+        lineModeProgRef.current = lmt.to
+      }
     }
 
     if (!hasData && !useStash) {
       // No chart pipeline — draw loading or empty as the sole visual.
-      // Loading is ONLY drawn here (never behind the chart) so there's
-      // always ONE line on screen, never two overlapping.
+      const loadingColor = isCandle
+        ? cfg.palette.gridLabel  // match morph line's grey at colorBlend=0 (BUG #1)
+        : undefined
       if (loadingAlpha > 0.01) {
-        drawLoading(ctx, w, h, pad, cfg.palette, now_ms, loadingAlpha)
+        drawLoading(ctx, w, h, pad, cfg.palette, now_ms, loadingAlpha, loadingColor)
       }
       if ((1 - loadingAlpha) > 0.01) {
         drawEmpty(ctx, w, h, pad, cfg.palette, 1 - loadingAlpha, now_ms, false, cfg.emptyText)
@@ -684,6 +954,452 @@ export function useLivelineEngine(
       rafRef.current = requestAnimationFrame(draw)
       return
     }
+
+    if (isCandle) {
+      // ═══════════════════════════════════════════════════════
+      // CANDLE MODE PIPELINE
+      // ═══════════════════════════════════════════════════════
+
+      // Frozen now — prevent candles from scrolling during reverse morph
+      if (hasData) frozenNowRef.current = Date.now() / 1000 - timeDebtRef.current
+      const now = (hasData || chartReveal < 0.005)
+        ? Date.now() / 1000 - timeDebtRef.current
+        : frozenNowRef.current
+      const rawLive = pausedCandlesRef.current ? (pausedLiveRef.current ?? undefined) : cfg.liveCandle
+      let effectiveLineData = pausedLineDataRef.current ?? cfg.lineData
+      let effectiveLineValue = pausedLineValueRef.current ?? cfg.lineValue
+      // Stash tick data for reverse morph — keeps tick resolution during morphback
+      if (hasData && effectiveLineData && effectiveLineData.length > 0) {
+        lastLineDataStashRef.current = effectiveLineData
+        lastLineValueStashRef.current = effectiveLineValue
+      }
+      if (useStash && lastLineDataStashRef.current.length > 0) {
+        effectiveLineData = lastLineDataStashRef.current
+        effectiveLineValue = lastLineValueStashRef.current
+      }
+      const candleWidthSecs = cfg.candleWidth ?? 1
+
+      // --- Candle width morph transition ---
+      const cwt = candleWidthTransRef.current
+      let morphT = -1
+      let displayCandleWidth: number
+      if (cwt.startMs > 0) {
+        const elapsed = now_ms - cwt.startMs
+        const t = Math.min(elapsed / CANDLE_WIDTH_TRANS_MS, 1)
+        morphT = (1 - Math.cos(t * Math.PI)) / 2
+        displayCandleWidth = Math.exp(
+          Math.log(cwt.fromWidth) + (Math.log(cwt.toWidth) - Math.log(cwt.fromWidth)) * morphT,
+        )
+        if (t >= 1) { displayCandleWidth = cwt.toWidth; cwt.startMs = 0; morphT = -1 }
+      } else {
+        displayCandleWidth = cwt.toWidth
+      }
+      if (candleWidthSecs !== cwt.toWidth) {
+        cwt.oldCandles = prevCandleDataRef.current.candles
+        cwt.oldWidth = prevCandleDataRef.current.width
+        cwt.fromWidth = displayCandleWidth
+        cwt.toWidth = candleWidthSecs
+        cwt.startMs = now_ms
+        morphT = 0
+        cwt.rangeFromMin = displayMinRef.current
+        cwt.rangeFromMax = displayMaxRef.current
+        const curWindow = displayWindowRef.current
+        const re = now + curWindow * CANDLE_BUFFER
+        const le = re - curWindow
+        const targetVis: CandlePoint[] = []
+        for (const c of effectiveCandles) {
+          if (c.time + candleWidthSecs >= le && c.time <= re) targetVis.push(c)
+        }
+        if (rawLive) targetVis.push(rawLive)
+        if (targetVis.length > 0) {
+          const tr = computeCandleRange(targetVis)
+          cwt.rangeToMin = tr.min
+          cwt.rangeToMax = tr.max
+        } else {
+          cwt.rangeToMin = displayMinRef.current
+          cwt.rangeToMax = displayMaxRef.current
+        }
+      }
+      prevCandleDataRef.current = { candles: cfg.candles ?? [], width: candleWidthSecs }
+
+      // lineModeProg is updated before the early return (see above).
+      const lineModeProg = lineModeProgRef.current
+
+      // --- Line density transition ---
+      const ldt = lineDensityTransRef.current
+      const hasTickData = effectiveLineData && effectiveLineData.length > 0
+      const densityTarget = (cfg.lineMode && lineModeProg >= 0.3 && hasTickData) ? 1 : 0
+      if (ldt.to !== densityTarget) {
+        ldt.from = lineDensityProgRef.current
+        ldt.to = densityTarget
+        ldt.startMs = now_ms
+      }
+      let lineDensityProg: number
+      if (ldt.startMs > 0) {
+        const elapsed = now_ms - ldt.startMs
+        const t = Math.min(elapsed / LINE_DENSITY_MS, 1)
+        lineDensityProg = ldt.from + (ldt.to - ldt.from) * (1 - (1 - t) * (1 - t))
+        if (t >= 1) { lineDensityProg = ldt.to; ldt.startMs = 0 }
+      } else {
+        lineDensityProg = ldt.to
+      }
+      lineDensityProgRef.current = lineDensityProg
+
+      // --- Window transition ---
+      const transition = windowTransitionRef.current
+      const windowResult = updateCandleWindowTransition(
+        cfg.windowSecs, transition, displayWindowRef.current,
+        displayMinRef.current, displayMaxRef.current,
+        now_ms, now, effectiveCandles, rawLive, candleWidthSecs, CANDLE_BUFFER,
+      )
+      displayWindowRef.current = windowResult.windowSecs
+      const windowSecs = windowResult.windowSecs
+      const windowTransProgress = windowResult.windowTransProgress
+      const isWindowTransitioning = transition.startMs > 0
+
+      const rightEdge = now + windowSecs * CANDLE_BUFFER
+      const leftEdge = rightEdge - windowSecs
+
+      // --- Live candle OHLC lerp ---
+      let smoothLive: CandlePoint | undefined
+      if (rawLive) {
+        const prev = displayCandleRef.current
+        if (!prev || prev.time !== rawLive.time) {
+          displayCandleRef.current = {
+            time: rawLive.time, open: rawLive.open,
+            high: rawLive.open, low: rawLive.open, close: rawLive.open,
+          }
+          liveBirthAlphaRef.current = 0
+        } else {
+          const dc = displayCandleRef.current!
+          dc.open = lerp(dc.open, rawLive.open, CANDLE_LERP_SPEED, pausedDt)
+          dc.high = lerp(dc.high, rawLive.high, CANDLE_LERP_SPEED, pausedDt)
+          dc.low = lerp(dc.low, rawLive.low, CANDLE_LERP_SPEED, pausedDt)
+          dc.close = lerp(dc.close, rawLive.close, CANDLE_LERP_SPEED, pausedDt)
+        }
+        liveBirthAlphaRef.current = lerp(liveBirthAlphaRef.current, 1, 0.2, pausedDt)
+        if (liveBirthAlphaRef.current > 0.99) liveBirthAlphaRef.current = 1
+        const dc = displayCandleRef.current!
+        const bullTarget = dc.close >= dc.open ? 1 : 0
+        liveBullRef.current = lerp(liveBullRef.current, bullTarget, 0.12, pausedDt)
+        if (liveBullRef.current > 0.99) liveBullRef.current = 1
+        if (liveBullRef.current < 0.01) liveBullRef.current = 0
+        smoothLive = dc
+      } else {
+        displayCandleRef.current = null
+        liveBirthAlphaRef.current = 1
+        liveBullRef.current = 0.5
+      }
+
+      // --- Smooth close for line mode ---
+      if (rawLive) {
+        if (!lineSmoothInitedRef.current) {
+          lineSmoothCloseRef.current = rawLive.close
+          lineSmoothInitedRef.current = true
+        } else {
+          const valGap = Math.abs(rawLive.close - lineSmoothCloseRef.current)
+          const prevRange = displayMaxRef.current - displayMinRef.current || 1
+          const gapRatio = Math.min(valGap / prevRange, 1)
+          const adaptiveSpeed = LINE_LERP_BASE + (1 - gapRatio) * LINE_ADAPTIVE_BOOST
+          lineSmoothCloseRef.current = lerp(lineSmoothCloseRef.current, rawLive.close, adaptiveSpeed, pausedDt)
+          if (valGap < prevRange * LINE_SNAP_THRESHOLD) lineSmoothCloseRef.current = rawLive.close
+        }
+      } else if (!useStash) {
+        // Only reset when not using stash — during reverse morph,
+        // freeze the smooth value (matches line mode's displayValueRef freeze)
+        lineSmoothInitedRef.current = false
+      }
+
+      // --- Smooth tick value for density transition ---
+      if (effectiveLineValue !== undefined && hasTickData) {
+        if (!lineTickSmoothInitedRef.current) {
+          lineTickSmoothRef.current = effectiveLineValue
+          lineTickSmoothInitedRef.current = true
+        } else {
+          const valGap = Math.abs(effectiveLineValue - lineTickSmoothRef.current)
+          const prevRange = displayMaxRef.current - displayMinRef.current || 1
+          const gapRatio = Math.min(valGap / prevRange, 1)
+          const adaptiveSpeed = LINE_LERP_BASE + (1 - gapRatio) * LINE_ADAPTIVE_BOOST
+          lineTickSmoothRef.current = lerp(lineTickSmoothRef.current, effectiveLineValue, adaptiveSpeed, pausedDt)
+          if (valGap < prevRange * LINE_SNAP_THRESHOLD) lineTickSmoothRef.current = effectiveLineValue
+        }
+      } else if (!useStash) {
+        lineTickSmoothInitedRef.current = false
+      }
+
+      // --- Build visible candles ---
+      const visible: CandlePoint[] = []
+      for (const c of effectiveCandles) {
+        if (c.time + candleWidthSecs >= leftEdge && c.time <= rightEdge) visible.push(c)
+      }
+      if (smoothLive && smoothLive.time + displayCandleWidth >= leftEdge && smoothLive.time <= rightEdge) {
+        visible.push(smoothLive)
+      }
+      let oldVisible: CandlePoint[] = []
+      if (morphT >= 0 && cwt.oldCandles.length > 0) {
+        for (const c of cwt.oldCandles) {
+          if (c.time + cwt.oldWidth >= leftEdge && c.time <= rightEdge) oldVisible.push(c)
+        }
+      }
+
+      // Stash visible candles for reverse morph
+      if (hasData) {
+        lastCandlesRef.current = visible
+        lastLiveRef.current = smoothLive ?? null
+      }
+      const effectiveVisible = useStash ? lastCandlesRef.current : visible
+      const effectiveLive = useStash ? (lastLiveRef.current ?? undefined) : smoothLive
+
+      // --- Range computation ---
+      const chartW = w - pad.left - pad.right
+      let computed = effectiveVisible.length > 0
+        ? computeCandleRange(effectiveVisible)
+        : { min: displayMinRef.current, max: displayMaxRef.current }
+      if (lineModeProg > 0.01 && effectiveVisible.length > 0) {
+        const smoothClose = lineSmoothInitedRef.current ? lineSmoothCloseRef.current : undefined
+        const closeRng = computeCloseRange(effectiveVisible, smoothClose)
+        computed = {
+          min: computed.min + (closeRng.min - computed.min) * lineModeProg,
+          max: computed.max + (closeRng.max - computed.max) * lineModeProg,
+        }
+      }
+      if (lineDensityProg > 0.01 && effectiveLineData && effectiveLineData.length > 0) {
+        const smoothTick = lineTickSmoothInitedRef.current ? lineTickSmoothRef.current : computed.min
+        const visibleTicks: LivelinePoint[] = []
+        for (const pt of effectiveLineData) {
+          if (pt.time >= leftEdge && pt.time <= rightEdge) visibleTicks.push(pt)
+        }
+        if (visibleTicks.length > 0) {
+          const tickRng = computeRange(visibleTicks, smoothTick)
+          computed = {
+            min: computed.min + (tickRng.min - computed.min) * lineDensityProg,
+            max: computed.max + (tickRng.max - computed.max) * lineDensityProg,
+          }
+        }
+      }
+      const rangeResult = updateCandleRange(
+        computed, rangeInitedRef.current,
+        displayMinRef.current, displayMaxRef.current,
+        isWindowTransitioning, windowTransProgress, transition,
+        chartH, pausedDt,
+      )
+      if (morphT >= 0) {
+        rangeResult.displayMin = cwt.rangeFromMin + (cwt.rangeToMin - cwt.rangeFromMin) * morphT
+        rangeResult.displayMax = cwt.rangeFromMax + (cwt.rangeToMax - cwt.rangeFromMax) * morphT
+        rangeResult.minVal = rangeResult.displayMin
+        rangeResult.maxVal = rangeResult.displayMax
+        rangeResult.valRange = (rangeResult.displayMax - rangeResult.displayMin) || 0.001
+      }
+      rangeInitedRef.current = rangeResult.rangeInited
+      displayMinRef.current = rangeResult.displayMin
+      displayMaxRef.current = rangeResult.displayMax
+      const { minVal, maxVal, valRange } = rangeResult
+
+      const layout: ChartLayout = {
+        w, h, pad,
+        chartW, chartH,
+        leftEdge, rightEdge,
+        minVal, maxVal, valRange,
+        toX: (t: number) => pad.left + ((t - leftEdge) / (rightEdge - leftEdge)) * chartW,
+        toY: (v: number) => pad.top + (1 - (v - minVal) / valRange) * chartH,
+      }
+
+      // --- Hover + scrub ---
+      const hoverPx = hoverXRef.current
+      let hoveredCandle: CandlePoint | null = null
+      let isActiveHover = false
+      if (hoverPx !== null && hoverPx >= pad.left && hoverPx <= w - pad.right) {
+        hoveredCandle = candleAtX(effectiveVisible, hoverPx, displayCandleWidth, layout)
+        if (hoveredCandle) isActiveHover = true
+      }
+      const scrubTarget = isActiveHover ? 1 : 0
+      scrubAmountRef.current = lerp(scrubAmountRef.current, scrubTarget, 0.12, dt)
+      if (scrubAmountRef.current < 0.01) scrubAmountRef.current = 0
+      if (scrubAmountRef.current > 0.99) scrubAmountRef.current = 1
+      const scrubAmount = scrubAmountRef.current
+
+      let drawHoverX = hoverPx
+      let drawHoverTime = 0
+      let drawHoverCandle: CandlePoint | null = hoveredCandle
+      if (!isActiveHover && scrubAmount > 0 && lastHoverRef.current) {
+        drawHoverX = lastHoverRef.current.x
+        drawHoverTime = lastHoverRef.current.time
+        drawHoverCandle = candleAtX(effectiveVisible, lastHoverRef.current.x, displayCandleWidth, layout)
+      } else if (isActiveHover && hoverPx !== null) {
+        drawHoverTime = layout.leftEdge + ((hoverPx - pad.left) / chartW) * (layout.rightEdge - layout.leftEdge)
+        lastHoverRef.current = { x: hoverPx, value: hoveredCandle?.close ?? 0, time: drawHoverTime }
+      }
+
+      let drawCandles = effectiveVisible
+      let drawOldCandles = oldVisible
+      let drawLive = effectiveLive
+
+      // Line mode: blend live close toward smooth close
+      if (lineModeProg > 0.01 && drawLive && lineSmoothInitedRef.current) {
+        const blended = drawLive.close + (lineSmoothCloseRef.current - drawLive.close) * lineModeProg
+        drawLive = { ...drawLive, close: blended }
+        const li = drawCandles.length - 1
+        if (li >= 0 && drawCandles[li].time === drawLive.time) {
+          drawCandles = drawCandles.slice()
+          drawCandles[li] = { ...drawCandles[li], close: blended }
+        }
+      }
+
+      // Line mode OHLC collapse
+      if (lineModeProg > 0.01 && lineModeProg < 0.99) {
+        const collapseOHLC = (c: CandlePoint): CandlePoint => {
+          const inv = 1 - lineModeProg
+          return {
+            time: c.time,
+            open: c.close + (c.open - c.close) * inv,
+            high: c.close + (c.high - c.close) * inv,
+            low: c.close + (c.low - c.close) * inv,
+            close: c.close,
+          }
+        }
+        drawCandles = drawCandles.map(collapseOHLC)
+        if (drawOldCandles.length > 0) drawOldCandles = drawOldCandles.map(collapseOHLC)
+        if (drawLive) drawLive = collapseOHLC(drawLive)
+      }
+
+      // Build lineVisible for drawLine — value-space points that drawLine
+      // converts to screen coords with its own morphY/alpha/color logic.
+      let lineVisible: LivelinePoint[]
+      let lineSmoothValue: number
+      if (lineDensityProg > 0.01 && effectiveLineData && effectiveLineData.length > 0) {
+        // Density transition: blend candle-close values toward tick values
+        const closeRefs: { t: number; v: number }[] = []
+        for (const c of drawCandles) {
+          closeRefs.push({ t: c.time + displayCandleWidth / 2, v: c.close })
+        }
+        if (drawLive) closeRefs.push({ t: now, v: drawLive.close })
+
+        lineVisible = []
+        let refIdx = 0
+        for (const pt of effectiveLineData) {
+          if (pt.time < leftEdge || pt.time > rightEdge) continue
+          while (refIdx < closeRefs.length - 2 && closeRefs[refIdx + 1].t < pt.time) refIdx++
+          let interpClose: number
+          if (closeRefs.length === 0) {
+            interpClose = pt.value
+          } else if (closeRefs.length === 1 || pt.time <= closeRefs[0].t) {
+            interpClose = closeRefs[0].v
+          } else if (refIdx >= closeRefs.length - 1) {
+            interpClose = closeRefs[closeRefs.length - 1].v
+          } else {
+            const a = closeRefs[refIdx]
+            const b = closeRefs[refIdx + 1]
+            const span = b.t - a.t
+            const frac = span > 0 ? Math.max(0, Math.min(1, (pt.time - a.t) / span)) : 0
+            interpClose = a.v + (b.v - a.v) * frac
+          }
+          const blended = interpClose + (pt.value - interpClose) * lineDensityProg
+          lineVisible.push({ time: pt.time, value: blended })
+        }
+
+        const smoothTick = lineTickSmoothInitedRef.current
+          ? lineTickSmoothRef.current
+          : (effectiveLineValue ?? effectiveLineData[effectiveLineData.length - 1].value)
+        // No explicit live tip — drawLine appends one at toX(now) using lineSmoothValue
+        lineSmoothValue = lineSmoothCloseRef.current
+          + (smoothTick - lineSmoothCloseRef.current) * lineDensityProg
+      } else {
+        // Candle-close resolution — no live tip; drawLine appends one at toX(now)
+        lineVisible = drawCandles.map(c => ({
+          time: c.time + displayCandleWidth / 2,
+          value: c.close,
+        }))
+        lineSmoothValue = lineSmoothInitedRef.current
+          ? lineSmoothCloseRef.current
+          : (drawLive?.close ?? drawCandles[drawCandles.length - 1]?.close ?? 0)
+      }
+
+      // Pad lineVisible to span full chart width during reveal morph.
+      // Without this, data that doesn't fill the window creates a partial-width
+      // line that pops when it hands off to the full-width loading squiggly.
+      if (chartReveal < 1 && lineVisible.length >= 2) {
+        const firstTime = lineVisible[0].time
+        const windowSpan = rightEdge - leftEdge
+        if (firstTime - leftEdge > windowSpan * 0.05) {
+          const firstVal = lineVisible[0].value
+          const step = windowSpan / 32
+          const padded: LivelinePoint[] = []
+          for (let t = leftEdge; t < firstTime - step * 0.5; t += step) {
+            padded.push({ time: t, value: firstVal })
+          }
+          lineVisible = [...padded, ...lineVisible]
+        }
+      }
+
+      // --- Draw ---
+      drawCandleFrame(ctx, layout, cfg.palette, {
+        candles: drawCandles,
+        displayCandleWidth,
+        oldCandles: drawOldCandles,
+        oldWidth: cwt.oldWidth,
+        morphT,
+        liveCandle: drawLive,
+        liveTime: effectiveLive?.time ?? -1,
+        liveBirthAlpha: liveBirthAlphaRef.current,
+        liveBullBlend: liveBullRef.current,
+        lineModeProg,
+        chartReveal,
+        now_ms,
+        now,
+        pauseProgress,
+        showGrid: cfg.showGrid,
+        scrubAmount,
+        hoverX: drawHoverX,
+        hoverValue: drawHoverCandle?.close ?? null,
+        hoverTime: drawHoverTime,
+        hoveredCandle: drawHoverCandle,
+        formatValue: cfg.formatValue,
+        formatTime: cfg.formatTime,
+        gridState: gridStateRef.current,
+        timeAxisState: timeAxisStateRef.current,
+        dt: pausedDt,
+        targetWindowSecs: cfg.windowSecs,
+        tooltipY: cfg.tooltipY,
+        tooltipOutline: cfg.tooltipOutline,
+        lineVisible,
+        lineSmoothValue,
+        emptyText: cfg.emptyText,
+        loadingAlpha,
+        // Show empty overlay when not loading AND loadingAlpha has fully
+        // decayed. This prevents the gradient gap from flashing during
+        // loading→live (where loadingAlpha starts at ~1), while still
+        // allowing smooth fade-out during empty→live (loadingAlpha is 0).
+        showEmptyOverlay: !(cfg.loading ?? false) && loadingAlpha < 0.01,
+      })
+
+      // Badge in candle mode — only when in line mode (lineModeProg > 0.5)
+      if (badgeRef.current) {
+        if (lineModeProg > 0.5 && cfg.showBadge) {
+          const momentum = detectMomentum(lineVisible)
+          badgeYRef.current = updateBadgeDOM(
+            badgeRef.current, cfg, lineSmoothValue, layout, momentum,
+            badgeYRef.current, badgeColorRef.current,
+            isWindowTransitioning, noMotion, ctx, pausedDt,
+            chartReveal,
+          )
+          // Fade badge in/out with lineModeProg (0.5→1 maps to 0→1)
+          const badgeFade = (lineModeProg - 0.5) * 2
+          if (badgeRef.current.container.style.display !== 'none') {
+            const base = badgeRef.current.container.style.opacity
+              ? parseFloat(badgeRef.current.container.style.opacity) : 1
+            badgeRef.current.container.style.opacity = String(
+              base * badgeFade * (1 - pauseProgress),
+            )
+          }
+        } else {
+          badgeRef.current.container.style.display = 'none'
+        }
+      }
+
+    } else {
+    // ═══════════════════════════════════════════════════════
+    // LINE MODE PIPELINE (existing)
+    // ═══════════════════════════════════════════════════════
 
     const effectivePoints = useStash ? lastDataRef.current : points
 
@@ -869,6 +1585,8 @@ export function useLivelineEngine(
         else valEl.style.removeProperty('color')
       }
     }
+
+    } // end else (line mode)
 
     rafRef.current = requestAnimationFrame(draw)
   }, [canvasRef])

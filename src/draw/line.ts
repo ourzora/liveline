@@ -7,8 +7,8 @@ function parseRgba(color: string): [number, number, number, number] {
   const hex = color.match(/^#([0-9a-f]{3,8})$/i)
   if (hex) {
     let h = hex[1]
-    if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2]
-    return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16), 1]
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2]
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16), 1]
   }
   const rgba = color.match(/rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)/)
   if (rgba) return [+rgba[1], +rgba[2], +rgba[3], +rgba[4]]
@@ -84,8 +84,12 @@ export function drawLine(
   scrubAmount: number = 0,
   chartReveal: number = 1,
   now_ms: number = 0,
+  colorBlend: number = 1,
+  skipDashLine: boolean = false,
+  fillScale: number = 1,
 ) {
   const { h, pad, toX, toY, chartW, chartH } = layout
+  const incomingAlpha = ctx.globalAlpha
 
   // Build screen-space points: all historical data stays stable,
   // but the LAST data point uses smoothValue for its Y (so big jumps
@@ -132,17 +136,19 @@ export function drawLine(
   // Reveal alphas: at reveal=0, line matches loading/empty brightness (shared breath).
   // As reveal increases, line ramps to full. Fill fades in with reveal.
   let lineAlpha = 1
-  let fillAlpha = 1
+  let fillAlpha = fillScale
   if (chartReveal < 1) {
     const breath = loadingBreath(now_ms)
     lineAlpha = breath + (1 - breath) * chartReveal
-    fillAlpha = chartReveal
+    fillAlpha = chartReveal * fillScale
   }
 
   // Blend line color: grey at reveal=0, accent by reveal≈0.3.
-  // Front-loaded so the color shifts early while alpha is still low.
-  const strokeColor = chartReveal < 1
-    ? blendColor(palette.gridLabel, palette.line, Math.min(1, chartReveal * 3))
+  // colorBlend scales the accent mix — 0 forces grey (used during reverse morph
+  // so the line fades to the loading squiggly color instead of flashing blue).
+  const colorT = Math.min(1, chartReveal * 3) * colorBlend
+  const strokeColor = (chartReveal < 1 || colorBlend < 1)
+    ? blendColor(palette.gridLabel, palette.line, colorT)
     : undefined
 
   const isScrubbing = scrubX !== null
@@ -169,7 +175,7 @@ export function drawLine(
     ctx.beginPath()
     ctx.rect(scrubX!, 0, layout.w - scrubX!, h)
     ctx.clip()
-    ctx.globalAlpha = 1 - scrubAmount * 0.6
+    ctx.globalAlpha = incomingAlpha * (1 - scrubAmount * 0.6)
     renderCurve(ctx, layout, palette, pts, showFill, lineAlpha, fillAlpha, strokeColor)
     ctx.restore()
   } else {
@@ -181,21 +187,23 @@ export function drawLine(
 
   // Dashed current-price line — morphs from center during reveal (fades in late,
   // so the center-vs-squiggly difference is imperceptible by the time it's visible)
-  const realCurrentY = Math.max(pad.top, Math.min(h - pad.bottom, toY(smoothValue)))
-  const currentY = chartReveal < 1
-    ? centerY + (realCurrentY - centerY) * chartReveal
-    : realCurrentY
-  ctx.setLineDash([4, 4])
-  ctx.strokeStyle = palette.dashLine
-  ctx.lineWidth = 1
-  const dashBase = isScrubbing ? 1 - scrubAmount * 0.2 : 1
-  ctx.globalAlpha = chartReveal < 1 ? dashBase * chartReveal : dashBase
-  ctx.beginPath()
-  ctx.moveTo(pad.left, currentY)
-  ctx.lineTo(layout.w - pad.right, currentY)
-  ctx.stroke()
-  ctx.setLineDash([])
-  ctx.globalAlpha = 1
+  if (!skipDashLine) {
+    const realCurrentY = Math.max(pad.top, Math.min(h - pad.bottom, toY(smoothValue)))
+    const currentY = chartReveal < 1
+      ? centerY + (realCurrentY - centerY) * chartReveal
+      : realCurrentY
+    ctx.setLineDash([4, 4])
+    ctx.strokeStyle = palette.dashLine
+    ctx.lineWidth = 1
+    const dashBase = isScrubbing ? 1 - scrubAmount * 0.2 : 1
+    ctx.globalAlpha = incomingAlpha * (chartReveal < 1 ? dashBase * chartReveal : dashBase)
+    ctx.beginPath()
+    ctx.moveTo(pad.left, currentY)
+    ctx.lineTo(layout.w - pad.right, currentY)
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+  ctx.globalAlpha = incomingAlpha
 
   // Clamp last point Y so dot stays within canvas (not chart area).
   // The dot outer circle is 6.5px + shadow — 10px margin keeps it visible.

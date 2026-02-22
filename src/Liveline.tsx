@@ -47,6 +47,13 @@ export function Liveline({
   onHover,
   cursor = 'crosshair',
   pulse = true,
+  mode = 'line',
+  candles,
+  candleWidth,
+  liveCandle,
+  lineMode,
+  lineData,
+  lineValue,
   className,
   style,
 }: LivelineProps) {
@@ -110,7 +117,7 @@ export function Liveline({
     windowSecs: effectiveWindowSecs,
     lerpSpeed,
     showGrid: grid,
-    showBadge: badge,
+    showBadge: mode === 'candle' ? (lineMode ? badge : false) : badge,
     showMomentum,
     momentumOverride,
     showFill: fill,
@@ -133,6 +140,13 @@ export function Liveline({
     loading,
     paused,
     emptyText,
+    mode,
+    candles,
+    candleWidth,
+    liveCandle,
+    lineMode,
+    lineData,
+    lineValue,
   })
 
   const cursorStyle = scrub ? cursor : 'default'

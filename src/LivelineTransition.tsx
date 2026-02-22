@@ -19,7 +19,7 @@ export interface LivelineTransitionProps {
  * ```tsx
  * <LivelineTransition active={chartType}>
  *   <Liveline key="line" data={data} value={value} />
- *   <LivelineCandlestick key="candle" candles={candles} candleWidth={5} />
+ *   <Liveline key="candle" mode="candle" candles={candles} candleWidth={5} data={data} value={value} />
  * </LivelineTransition>
  * ```
  */
