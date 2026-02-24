@@ -919,9 +919,7 @@ export function useLivelineEngine(
 
     if (!hasData && !useStash) {
       // No chart pipeline — draw loading or empty as the sole visual.
-      const loadingColor = isCandle
-        ? cfg.palette.gridLabel  // match morph line's grey at colorBlend=0 (BUG #1)
-        : undefined
+      const loadingColor = cfg.palette.gridLabel
       if (loadingAlpha > 0.01) {
         drawLoading(ctx, w, h, pad, cfg.palette, now_ms, loadingAlpha, loadingColor)
       }
