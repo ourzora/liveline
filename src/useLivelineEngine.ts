@@ -1219,6 +1219,12 @@ export function useLivelineEngine(
       } else if (isActiveHover && hoverPx !== null) {
         drawHoverTime = layout.leftEdge + ((hoverPx - pad.left) / chartW) * (layout.rightEdge - layout.leftEdge)
         lastHoverRef.current = { x: hoverPx, value: hoveredCandle?.close ?? 0, time: drawHoverTime }
+        cfg.onHover?.({
+          time: drawHoverTime,
+          value: hoveredCandle?.close ?? 0,
+          x: hoverPx,
+          y: layout.toY(hoveredCandle?.close ?? 0),
+        })
       }
 
       let drawCandles = effectiveVisible
