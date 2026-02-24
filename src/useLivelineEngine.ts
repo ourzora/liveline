@@ -48,6 +48,8 @@ interface EngineConfig {
   mode: 'line' | 'candle'
   candles?: CandlePoint[]
   candleWidth?: number
+  bullColor?: string
+  bearColor?: string
   liveCandle?: CandlePoint
   lineMode?: boolean
   lineData?: LivelinePoint[]
@@ -1337,6 +1339,8 @@ export function useLivelineEngine(
         closePriceCandle: closeLineSmoothInitedRef.current && rawLive
           ? { ...rawLive, close: closeLineSmoothRef.current }
           : rawLive,
+        bullColor: cfg.bullColor,
+        bearColor: cfg.bearColor,
         liveTime: effectiveLive?.time ?? -1,
         liveBirthAlpha: liveBirthAlphaRef.current,
         liveBullBlend: liveBullRef.current,

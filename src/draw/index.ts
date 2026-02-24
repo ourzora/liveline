@@ -240,6 +240,8 @@ export interface CandleDrawOptions {
   liveCandle?: CandlePoint
   /** Pre-blend live candle for the dashed close-price line (unaffected by line mode morph) */
   closePriceCandle?: CandlePoint
+  bullColor?: string
+  bearColor?: string
   liveTime: number
   liveBirthAlpha: number
   liveBullBlend: number
@@ -341,7 +343,16 @@ export function drawCandleFrame(
     if (lp < 0.99) {
       ctx.save()
       ctx.globalAlpha = closeAlpha * (1 - lp)
-      drawClosePrice(ctx, layout, palette, closeSource, opts.scrubAmount, opts.liveBullBlend)
+      drawClosePrice(
+        ctx,
+        layout,
+        palette,
+        closeSource,
+        opts.scrubAmount,
+        opts.liveBullBlend,
+        opts.bullColor,
+        opts.bearColor,
+      )
       ctx.restore()
     }
     // Accent-colored dash line (fades in with lineModeProg)
@@ -394,7 +405,7 @@ export function drawCandleFrame(
       drawCandlesticks(
         ctx, layout, revealOld, opts.oldWidth,
         -1, opts.now_ms, opts.hoverX ?? 0, opts.scrubAmount,
-        1, -1, accentCol, lp,
+        1, -1, opts.bullColor, opts.bearColor, accentCol, lp,
       )
       ctx.globalAlpha = opts.morphT * candleAlpha
       drawCandlesticks(
@@ -402,7 +413,7 @@ export function drawCandleFrame(
         opts.liveCandle?.time ?? -1, opts.now_ms,
         opts.hoverX ?? 0, opts.scrubAmount,
         opts.liveBirthAlpha, opts.liveBullBlend,
-        accentCol, lp,
+        opts.bullColor, opts.bearColor, accentCol, lp,
       )
       ctx.globalAlpha = 1
     } else {
@@ -412,7 +423,7 @@ export function drawCandleFrame(
         opts.liveCandle?.time ?? -1, opts.now_ms,
         opts.hoverX ?? 0, opts.scrubAmount,
         opts.liveBirthAlpha, opts.liveBullBlend,
-        accentCol, lp,
+        opts.bullColor, opts.bearColor, accentCol, lp,
       )
     }
     ctx.restore()
@@ -478,6 +489,8 @@ export function drawCandleFrame(
         opts.hoverX, opts.hoveredCandle, opts.hoverTime ?? 0,
         opts.formatValue, opts.formatTime,
         opts.scrubAmount,
+        opts.bullColor,
+        opts.bearColor,
       )
     }
   }

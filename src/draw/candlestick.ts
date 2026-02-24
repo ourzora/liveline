@@ -10,31 +10,66 @@ const BULL_RGB = [34, 197, 94] as const
 const BEAR_RGB = [239, 68, 68] as const
 
 /** Blend bear→bull by t (0=bear, 1=bull). */
-function blendColor(t: number): string {
-  const r = Math.round(BEAR_RGB[0] + (BULL_RGB[0] - BEAR_RGB[0]) * t)
-  const g = Math.round(BEAR_RGB[1] + (BULL_RGB[1] - BEAR_RGB[1]) * t)
-  const b = Math.round(BEAR_RGB[2] + (BULL_RGB[2] - BEAR_RGB[2]) * t)
+function blendColor(
+  t: number,
+  bearRgb: readonly [number, number, number],
+  bullRgb: readonly [number, number, number],
+): string {
+  const r = Math.round(bearRgb[0] + (bullRgb[0] - bearRgb[0]) * t)
+  const g = Math.round(bearRgb[1] + (bullRgb[1] - bearRgb[1]) * t)
+  const b = Math.round(bearRgb[2] + (bullRgb[2] - bearRgb[2]) * t)
   return `rgb(${r},${g},${b})`
 }
 
 /** Parse "#rrggbb" or "rgb(r,g,b)" to [r,g,b]. */
-function parseRgb(color: string): [number, number, number] {
+function parseRgb(
+  color: string,
+  fallback: readonly [number, number, number],
+): [number, number, number] {
+  const shortHex = color.match(/^#([0-9a-f]{3})$/i)
+  if (shortHex) {
+    const [r, g, b] = shortHex[1].split('')
+    return [
+      parseInt(`${r}${r}`, 16),
+      parseInt(`${g}${g}`, 16),
+      parseInt(`${b}${b}`, 16),
+    ]
+  }
   const hex = color.match(/^#([0-9a-f]{6})$/i)
   if (hex) {
     const h = hex[1]
     return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
   }
-  const rgb = color.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/)
+  const rgb = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i)
   if (rgb) return [+rgb[1], +rgb[2], +rgb[3]]
-  return [128, 128, 128]
+  return [fallback[0], fallback[1], fallback[2]]
+}
+
+function resolveCandleColors(
+  bullColor?: string,
+  bearColor?: string,
+): {
+  bull: string
+  bear: string
+  bullRgb: [number, number, number]
+  bearRgb: [number, number, number]
+} {
+  const bull = bullColor ?? BULL
+  const bear = bearColor ?? BEAR
+  return {
+    bull,
+    bear,
+    bullRgb: parseRgb(bull, BULL_RGB),
+    bearRgb: parseRgb(bear, BEAR_RGB),
+  }
 }
 
 /** Blend a candle color toward an accent color by t. */
 function blendToAccent(candleColor: string, accentColor: string, t: number): string {
   if (t <= 0) return candleColor
   if (t >= 1) return accentColor
-  const [r1, g1, b1] = parseRgb(candleColor)
-  const [r2, g2, b2] = parseRgb(accentColor)
+  const [r1, g1, b1] = parseRgb(candleColor, [128, 128, 128])
+  const [r2, g2, b2] = parseRgb(accentColor, [128, 128, 128])
   const r = Math.round(r1 + (r2 - r1) * t)
   const g = Math.round(g1 + (g2 - g1) * t)
   const b = Math.round(b1 + (b2 - b1) * t)
@@ -91,6 +126,8 @@ export function drawCandlesticks(
   scrubDim: number,
   liveAlpha = 1,
   liveBullBlend = -1,
+  bullColor?: string,
+  bearColor?: string,
   accentColor?: string,
   accentBlend = 0,
 ) {
@@ -101,6 +138,7 @@ export function drawCandlesticks(
   const halfBody = bodyW / 2
   const padL = layout.pad.left
   const padR = layout.pad.left + layout.chartW
+  const { bull, bear, bullRgb, bearRgb } = resolveCandleColors(bullColor, bearColor)
 
   // Live pulse: subtle brightness cycle
   const livePulse = 0.12 + Math.sin(now_ms * 0.004) * 0.08
@@ -111,7 +149,9 @@ export function drawCandlesticks(
 
     const isBull = c.close >= c.open
     const isLive = c.time === liveTime
-    let color = isLive && liveBullBlend >= 0 ? blendColor(liveBullBlend) : (isBull ? BULL : BEAR)
+    let color = isLive && liveBullBlend >= 0
+      ? blendColor(liveBullBlend, bearRgb, bullRgb)
+      : (isBull ? bull : bear)
     if (accentColor && accentBlend > 0.01) {
       color = blendToAccent(color, accentColor, accentBlend)
     }
@@ -190,12 +230,17 @@ export function drawClosePrice(
   liveCandle: CandlePoint,
   scrubDim: number,
   bullBlend = -1,
+  bullColor?: string,
+  bearColor?: string,
 ) {
   const y = layout.toY(liveCandle.close)
   if (y < layout.pad.top || y > layout.h - layout.pad.bottom) return
 
   const isBull = liveCandle.close >= liveCandle.open
-  const color = bullBlend >= 0 ? blendColor(bullBlend) : (isBull ? BULL : BEAR)
+  const { bull, bear, bullRgb, bearRgb } = resolveCandleColors(bullColor, bearColor)
+  const color = bullBlend >= 0
+    ? blendColor(bullBlend, bearRgb, bullRgb)
+    : (isBull ? bull : bear)
 
   const baseAlpha = ctx.globalAlpha
   ctx.save()
@@ -225,6 +270,8 @@ export function drawCandleCrosshair(
   formatValue: (v: number) => string,
   formatTime: (t: number) => string,
   opacity: number,
+  bullColor?: string,
+  bearColor?: string,
 ) {
   if (opacity < 0.01) return
 
@@ -245,7 +292,8 @@ export function drawCandleCrosshair(
   if (opacity < 0.1 || layout.w < 200) return
 
   const isBull = candle.close >= candle.open
-  const valueColor = isBull ? BULL : BEAR
+  const { bull, bear } = resolveCandleColors(bullColor, bearColor)
+  const valueColor = isBull ? bull : bear
 
   const cl = formatValue(candle.close)
   const time = formatTime(hoverTime)

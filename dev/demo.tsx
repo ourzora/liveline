@@ -97,6 +97,8 @@ function Demo() {
   const [candleSecs, setCandleSecs] = useState(2)
   const [candles, setCandles] = useState<CandlePoint[]>([])
   const [liveCandle, setLiveCandle] = useState<CandlePoint | null>(null)
+  const [bullColor, setBullColor] = useState('#22c55e')
+  const [bearColor, setBearColor] = useState('#ef4444')
 
   const candleSecsRef = useRef(candleSecs)
   candleSecsRef.current = candleSecs
@@ -350,6 +352,74 @@ function Demo() {
         <Toggle on={scrub} onToggle={setScrub}>Scrub</Toggle>
       </Section>
 
+      <Section label="Colors">
+        <Label text="Bull">
+          <input
+            type="color"
+            value={bullColor}
+            onChange={(e) => setBullColor(e.target.value)}
+            style={{
+              width: 28,
+              height: 20,
+              border: '1px solid var(--fg-08)',
+              borderRadius: 4,
+              background: 'transparent',
+              cursor: 'pointer',
+              padding: 0,
+            }}
+          />
+          <input
+            type="text"
+            value={bullColor}
+            onChange={(e) => setBullColor(e.target.value)}
+            style={{
+              width: 88,
+              height: 20,
+              padding: '0 6px',
+              borderRadius: 4,
+              border: '1px solid var(--fg-08)',
+              background: 'var(--fg-02)',
+              color: isDark ? '#fff' : '#111',
+              fontSize: 11,
+              fontFamily: '"SF Mono", Menlo, monospace',
+            }}
+          />
+        </Label>
+        <Sep />
+        <Label text="Bear">
+          <input
+            type="color"
+            value={bearColor}
+            onChange={(e) => setBearColor(e.target.value)}
+            style={{
+              width: 28,
+              height: 20,
+              border: '1px solid var(--fg-08)',
+              borderRadius: 4,
+              background: 'transparent',
+              cursor: 'pointer',
+              padding: 0,
+            }}
+          />
+          <input
+            type="text"
+            value={bearColor}
+            onChange={(e) => setBearColor(e.target.value)}
+            style={{
+              width: 88,
+              height: 20,
+              padding: '0 6px',
+              borderRadius: 4,
+              border: '1px solid var(--fg-08)',
+              background: 'var(--fg-02)',
+              color: isDark ? '#fff' : '#111',
+              fontSize: 11,
+              fontFamily: '"SF Mono", Menlo, monospace',
+            }}
+          />
+        </Label>
+      </Section>
+
       {/* Main chart */}
       <div style={{
         height: 320,
@@ -374,6 +444,8 @@ function Demo() {
           paused={paused}
           theme={theme}
           color={preset === 'crypto' ? '#f7931a' : undefined}
+          bullColor={bullColor}
+          bearColor={bearColor}
           window={windowSecs}
           windows={preset === 'crypto' ? CRYPTO_WINDOWS : undefined}
           formatValue={preset === 'crypto' ? formatCrypto : undefined}
@@ -418,6 +490,8 @@ function Demo() {
                 paused={paused}
                 theme={theme}
                 color={preset === 'crypto' ? '#f7931a' : undefined}
+                bullColor={bullColor}
+                bearColor={bearColor}
                 window={windowSecs}
                 formatValue={preset === 'crypto' ? formatCrypto : undefined}
                 grid={grid && size.w >= 200}
@@ -446,6 +520,8 @@ function Demo() {
         <span>value: {value.toFixed(2)}</span>
         <span>window: {windowSecs}s</span>
         <span>candle: {candleSecs}s</span>
+        <span>bull: {bullColor}</span>
+        <span>bear: {bearColor}</span>
         <span>tick: {tickRate}ms</span>
         <span>volatility: {volatility}</span>
         <span>mode: {chartType}</span>

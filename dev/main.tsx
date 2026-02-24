@@ -60,6 +60,8 @@ function Demo() {
   const [scrub, setScrub] = useState(true)
   const [exaggerate, setExaggerate] = useState(false)
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const [bullColor, setBullColor] = useState('#22c55e')
+  const [bearColor, setBearColor] = useState('#ef4444')
 
   // Data controls
   const [volatility, setVolatility] = useState<Volatility>('normal')
@@ -223,6 +225,41 @@ function Demo() {
         </Label>
       </Section>
 
+      <Section label="Colors">
+        <Label text="Bull">
+          <input
+            type="color"
+            value={bullColor}
+            onChange={(e) => setBullColor(e.target.value)}
+            style={{
+              width: 28,
+              height: 20,
+              border: '1px solid var(--fg-08)',
+              borderRadius: 4,
+              background: 'transparent',
+              cursor: 'pointer',
+              padding: 0,
+            }}
+          />
+        </Label>
+        <Label text="Bear">
+          <input
+            type="color"
+            value={bearColor}
+            onChange={(e) => setBearColor(e.target.value)}
+            style={{
+              width: 28,
+              height: 20,
+              border: '1px solid var(--fg-08)',
+              borderRadius: 4,
+              background: 'transparent',
+              cursor: 'pointer',
+              padding: 0,
+            }}
+          />
+        </Label>
+      </Section>
+
       {/* Degen */}
       <Section label="Degen">
         <Toggle on={degen} onToggle={setDegen}>Enable</Toggle>
@@ -266,6 +303,8 @@ function Demo() {
           pulse={pulse}
           exaggerate={exaggerate}
           degen={degenOpts}
+          bullColor={bullColor}
+          bearColor={bearColor}
           windows={TIME_WINDOWS}
           onWindowChange={setWindowSecs}
         />
@@ -308,6 +347,8 @@ function Demo() {
                 pulse={pulse}
                 exaggerate={exaggerate}
                 degen={degenOpts}
+                bullColor={bullColor}
+                bearColor={bearColor}
               />
             </div>
           </div>

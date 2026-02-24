@@ -101,6 +101,8 @@ export interface LivelineProps {
   mode?: 'line' | 'candle'       // Chart type (default: 'line')
   candles?: CandlePoint[]         // OHLC candle data (required when mode='candle')
   candleWidth?: number            // Seconds per candle (required when mode='candle')
+  bullColor?: string              // Optional bull candle color override
+  bearColor?: string              // Optional bear candle color override
   liveCandle?: CandlePoint        // Current live candle with real-time OHLC
   lineMode?: boolean              // Morph candles into line display
   lineData?: LivelinePoint[]      // Tick-level data for density transition
