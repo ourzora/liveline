@@ -1,6 +1,6 @@
 # Liveline
 
-Real-time animated line chart for React. Canvas-rendered, 60fps, zero CSS imports.
+Real-time animated charts for React. Line and candlestick modes, canvas-rendered, 60fps, zero CSS imports.
 
 ## Install
 
@@ -66,6 +66,23 @@ The component fills its parent container. Set a height on the parent. Pass `data
 | `valueMomentumColor` | `boolean` | `false` | Color the value text green/red by momentum |
 | `degen` | `boolean \| DegenOptions` | `false` | Burst particles + chart shake on momentum swings |
 
+**Candlestick**
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `mode` | `'line' \| 'candle'` | `'line'` | Chart type |
+| `candles` | `CandlePoint[]` | — | OHLC candle data `{ time, open, high, low, close }` |
+| `candleWidth` | `number` | — | Seconds per candle |
+| `liveCandle` | `CandlePoint` | — | Current in-progress candle with real-time OHLC |
+| `lineMode` | `boolean` | `false` | Morph candles into a line display |
+| `lineData` | `LivelinePoint[]` | — | Tick-level data for line mode density |
+| `lineValue` | `number` | — | Current tick value for line mode |
+| `onModeChange` | `(mode) => void` | — | Callback for built-in line/candle toggle |
+
+When `mode="candle"`, pass `candles` (committed OHLC bars) and `liveCandle` (the current bar, updated every tick). `candleWidth` sets the time bucket in seconds. The `lineMode` prop smoothly morphs between candle and line views — candle bodies collapse to close price, then the line extends outward. Provide `lineData` and `lineValue` (tick-level resolution) for a smooth density transition during the morph.
+
+The `onModeChange` prop renders a built-in line/candle toggle next to the time window buttons.
+
 **State**
 
 | Prop | Type | Default | Description |
@@ -74,7 +91,7 @@ The component fills its parent container. Set a height on the parent. Pass `data
 | `paused` | `boolean` | `false` | Smoothly freeze chart scrolling; resume catches up to real time |
 | `emptyText` | `string` | `'No data to display'` | Text shown in the empty state |
 
-When `loading` flips to `false` with data present, the flat loading line morphs into the actual chart shape (line, fill, grid, and badge all animate in). When `data` is empty and `loading` is `false`, a minimal "No data" empty state is shown.
+When `loading` flips to `false` with data present, the loading line morphs into the actual chart shape. In line mode, the fill, grid, and badge animate in. In candle mode, flat lines expand into full OHLC bodies while the morph line fades out. When `data` is empty and `loading` is `false`, a minimal "No data" empty state is shown.
 
 **Time**
 
@@ -118,6 +135,45 @@ When `loading` flips to `false` with data present, the flat loading line morphs 
 
 ```tsx
 <Liveline data={data} value={value} color="#3b82f6" theme="dark" />
+```
+
+### Candlestick (minimal)
+
+```tsx
+<Liveline
+  mode="candle"
+  data={ticks}
+  value={latestTick}
+  candles={candles}
+  candleWidth={60}
+  liveCandle={liveCandle}
+  color="#f7931a"
+  formatValue={(v) => `$${v.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
+/>
+```
+
+### Candlestick (line mode toggle + time windows)
+
+```tsx
+<Liveline
+  mode="candle"
+  data={ticks}
+  value={latestTick}
+  candles={candles}
+  candleWidth={60}
+  liveCandle={liveCandle}
+  lineMode={showLine}
+  lineData={ticks}
+  lineValue={latestTick}
+  onModeChange={(mode) => setShowLine(mode === 'line')}
+  color="#f7931a"
+  formatValue={(v) => `$${v.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
+  windows={[
+    { label: '5m', secs: 300 },
+    { label: '15m', secs: 900 },
+    { label: '1h', secs: 3600 },
+  ]}
+/>
 ```
 
 ### Crypto-style (momentum + degen + exaggerate)
@@ -183,6 +239,8 @@ When `loading` flips to `false` with data present, the flat loading line morphs 
 - **requestAnimationFrame** loop pauses when the tab is hidden
 - **Fritsch-Carlson monotone splines** for smooth curves — no overshoots beyond local min/max
 - **Frame-rate-independent lerp** on value, Y-axis range, badge color, and scrub opacity
+- **Candlestick rendering** — OHLC bodies + wicks with bull/bear coloring, smooth live candle updates
+- **Line/candle morph** — candle bodies collapse to close price, morph line extends center-out, coordinated alpha crossfade
 - **ResizeObserver** tracks container size — no per-frame layout reads
 - **Theme derivation** — full palette from one accent color + light/dark mode
 - **Binary search interpolation** for hover value lookup

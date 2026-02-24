@@ -1,15 +1,17 @@
 {
   "name": "liveline",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "type": "module",
-  "description": "Real-time animated line chart for React",
+  "description": "Real-time animated charts for React — line and candlestick modes",
   "keywords": [
     "react",
     "chart",
     "canvas",
     "real-time",
     "animation",
-    "line-chart"
+    "line-chart",
+    "candlestick",
+    "ohlc"
   ],
   "license": "MIT",
   "author": "Benji Taylor",
