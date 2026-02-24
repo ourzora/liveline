@@ -296,6 +296,7 @@ export function drawCandleCrosshair(
   const valueColor = isBull ? bull : bear
 
   const cl = formatValue(candle.close)
+  if (!cl) return // Consumer suppressed values — keep crosshair line, skip OHLC text
   const time = formatTime(hoverTime)
 
   ctx.save()

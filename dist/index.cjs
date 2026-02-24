@@ -1155,6 +1155,7 @@ function drawCandleCrosshair(ctx, layout, palette, hoverX, candle, hoverTime, fo
   const { bull, bear } = resolveCandleColors(bullColor, bearColor);
   const valueColor = isBull ? bull : bear;
   const cl = formatValue(candle.close);
+  if (!cl) return;
   const time = formatTime(hoverTime);
   ctx.save();
   ctx.globalAlpha = opacity;
