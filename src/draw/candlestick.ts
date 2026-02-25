@@ -84,7 +84,7 @@ function candleDims(layout: ChartLayout, candleWidthSecs: number) {
   const candlePxW = candleWidthSecs * pxPerSec
   const bodyW = Math.max(1, candlePxW * 0.7)
   const wickW = Math.max(0.8, Math.min(2, bodyW * 0.15))
-  const radius = bodyW > 6 ? 1.5 : 0
+  const radius = 0
   return { bodyW, wickW, radius }
 }
 
