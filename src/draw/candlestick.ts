@@ -178,7 +178,7 @@ export function drawCandlesticks(
     // Wicks
     const wickTop = toY(c.high)
     const wickBottom = toY(c.low)
-    ctx.lineCap = 'round'
+    ctx.lineCap = 'butt'
     ctx.strokeStyle = color
 
     if (bodyTop - wickTop > 0.5) {
