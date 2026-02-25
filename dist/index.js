@@ -1005,7 +1005,7 @@ function candleDims(layout, candleWidthSecs) {
   const candlePxW = candleWidthSecs * pxPerSec;
   const bodyW = Math.max(1, candlePxW * 0.7);
   const wickW = Math.max(0.8, Math.min(2, bodyW * 0.15));
-  const radius = bodyW > 6 ? 1.5 : 0;
+  const radius = 0;
   return { bodyW, wickW, radius };
 }
 function roundedRect(ctx, x, y, w, h, r) {
@@ -1058,7 +1058,7 @@ function drawCandlesticks(ctx, layout, candles, candleWidthSecs, liveTime, now_m
     const bodyH = Math.max(1, bodyBottom - bodyTop);
     const wickTop = toY(c.high);
     const wickBottom = toY(c.low);
-    ctx.lineCap = "round";
+    ctx.lineCap = "butt";
     ctx.strokeStyle = color;
     if (bodyTop - wickTop > 0.5) {
       ctx.beginPath();
@@ -2365,7 +2365,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
       }
     }
     if (!hasData && !useStash) {
-      const loadingColor = isCandle ? cfg.palette.gridLabel : void 0;
+      const loadingColor = cfg.palette.gridLabel;
       if (loadingAlpha > 0.01) {
         drawLoading(ctx, w, h, pad, cfg.palette, now_ms, loadingAlpha, loadingColor);
       }
