@@ -73,6 +73,7 @@ interface LivelineProps {
     onHover?: (point: HoverPoint | null) => void;
     cursor?: string;
     pulse?: boolean;
+    dashLine?: boolean;
     mode?: 'line' | 'candle';
     candles?: CandlePoint[];
     candleWidth?: number;
@@ -94,7 +95,7 @@ interface CandlePoint {
     close: number;
 }
 
-declare function Liveline({ data, value, theme, color, window: windowSecs, grid, badge, momentum, fill, scrub, loading, paused, emptyText, exaggerate, degen: degenProp, badgeTail, badgeVariant, showValue, valueMomentumColor, windows, onWindowChange, windowStyle, tooltipY, tooltipOutline, orderbook, referenceLine, formatValue, formatTime, lerpSpeed, padding: paddingOverride, onHover, cursor, pulse, mode, candles, candleWidth, bullColor, bearColor, liveCandle, lineMode, lineData, lineValue, onModeChange, className, style, }: LivelineProps): react_jsx_runtime.JSX.Element;
+declare function Liveline({ data, value, theme, color, window: windowSecs, grid, badge, momentum, fill, scrub, loading, paused, emptyText, exaggerate, degen: degenProp, badgeTail, badgeVariant, showValue, valueMomentumColor, windows, onWindowChange, windowStyle, tooltipY, tooltipOutline, orderbook, referenceLine, formatValue, formatTime, lerpSpeed, padding: paddingOverride, onHover, cursor, pulse, dashLine, mode, candles, candleWidth, bullColor, bearColor, liveCandle, lineMode, lineData, lineValue, onModeChange, className, style, }: LivelineProps): react_jsx_runtime.JSX.Element;
 
 interface LivelineTransitionProps {
     /** Key of the active child to display. Must match a child's `key` prop. */

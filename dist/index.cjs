@@ -1382,7 +1382,7 @@ function drawFrame(ctx, layout, palette, opts) {
     ctx.restore();
   }
   const scrubX = opts.scrubAmount > 0.05 ? opts.hoverX : null;
-  const pts = drawLine(ctx, layout, palette, opts.visible, opts.smoothValue, opts.now, opts.showFill, scrubX, opts.scrubAmount, reveal, opts.now_ms);
+  const pts = drawLine(ctx, layout, palette, opts.visible, opts.smoothValue, opts.now, opts.showFill, scrubX, opts.scrubAmount, reveal, opts.now_ms, 1, opts.skipDashLine);
   {
     const timeAlpha = reveal < 1 ? revealRamp(0.15, 0.7) : 1;
     if (timeAlpha > 0.01) {
@@ -2970,6 +2970,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
         shakeState: cfg.degenOptions ? shakeStateRef.current : void 0,
         chartReveal,
         pauseProgress,
+        skipDashLine: cfg.skipDashLine,
         now_ms
       });
       const bgAlpha = 1 - chartReveal;
@@ -3063,6 +3064,7 @@ function Liveline({
   onHover,
   cursor = "crosshair",
   pulse = true,
+  dashLine = true,
   mode = "line",
   candles,
   candleWidth,
@@ -3167,7 +3169,8 @@ function Liveline({
     liveCandle,
     lineMode,
     lineData,
-    lineValue
+    lineValue,
+    skipDashLine: !dashLine
   });
   const cursorStyle = scrub ? cursor : "default";
   const activeColor = isDark ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.55)";

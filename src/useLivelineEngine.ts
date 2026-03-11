@@ -43,6 +43,7 @@ interface EngineConfig {
   loading?: boolean
   paused?: boolean
   emptyText?: string
+  skipDashLine: boolean
 
   // Candlestick mode
   mode: 'line' | 'candle'
@@ -1549,6 +1550,7 @@ export function useLivelineEngine(
       shakeState: cfg.degenOptions ? shakeStateRef.current : undefined,
       chartReveal,
       pauseProgress,
+      skipDashLine: cfg.skipDashLine,
       now_ms,
     })
 
