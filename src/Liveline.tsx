@@ -48,6 +48,7 @@ export function Liveline({
   cursor = 'crosshair',
   pulse = true,
   dashLine = true,
+  timeAxis = true,
   mode = 'line',
   candles,
   candleWidth,
@@ -173,6 +174,7 @@ export function Liveline({
     lineData,
     lineValue,
     skipDashLine: !dashLine,
+    skipTimeAxis: !timeAxis,
   })
 
   const cursorStyle = scrub ? cursor : 'default'

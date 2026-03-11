@@ -60,6 +60,7 @@ export interface DrawOptions {
   pauseProgress: number     // 0 = playing, 1 = fully paused
   now_ms: number            // performance.now() for breathing animation timing
   skipDashLine: boolean     // Hide the horizontal dashed value line
+  skipTimeAxis: boolean     // Hide the time axis baseline and labels
 }
 
 /**
@@ -130,12 +131,12 @@ export function drawFrame(
   const pts = drawLine(ctx, layout, palette, opts.visible, opts.smoothValue, opts.now, opts.showFill, scrubX, opts.scrubAmount, reveal, opts.now_ms, 1, opts.skipDashLine)
 
   // 4. Time axis — same timing as grid
-  {
+  if (!opts.skipTimeAxis) {
     const timeAlpha = reveal < 1 ? revealRamp(0.15, 0.7) : 1
     if (timeAlpha > 0.01) {
       ctx.save()
       if (timeAlpha < 1) ctx.globalAlpha = timeAlpha
-      drawTimeAxis(ctx, layout, palette, opts.windowSecs, opts.targetWindowSecs, opts.formatTime, opts.timeAxisState, opts.dt)
+      drawTimeAxis(false, ctx, layout, palette, opts.windowSecs, opts.targetWindowSecs, opts.formatTime, opts.timeAxisState, opts.dt)
       ctx.restore()
     }
   }
@@ -271,6 +272,7 @@ export interface CandleDrawOptions {
   emptyText?: string
   loadingAlpha: number
   showEmptyOverlay: boolean  // true only when collapsing to empty (not loading, not forward morph)
+  skipTimeAxis: boolean     // Hide the time axis baseline and labels
 }
 
 /**
@@ -444,12 +446,14 @@ export function drawCandleFrame(
   }
 
   // 6. Time axis — fades in (25%–60% of reveal)
-  const timeAlpha = revealRamp(0.25, 0.6)
-  if (timeAlpha > 0.01) {
-    ctx.save()
-    if (timeAlpha < 1) ctx.globalAlpha = timeAlpha
-    drawTimeAxis(ctx, layout, palette, opts.targetWindowSecs, opts.targetWindowSecs, opts.formatTime, opts.timeAxisState, opts.dt)
-    ctx.restore()
+  if (!opts.skipTimeAxis) {
+    const timeAlpha = revealRamp(0.25, 0.6)
+    if (timeAlpha > 0.01) {
+      ctx.save()
+      if (timeAlpha < 1) ctx.globalAlpha = timeAlpha
+      drawTimeAxis(false, ctx, layout, palette, opts.targetWindowSecs, opts.targetWindowSecs, opts.formatTime, opts.timeAxisState, opts.dt)
+      ctx.restore()
+    }
   }
 
   // 7. Left edge fade — gradient erase

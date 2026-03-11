@@ -97,6 +97,7 @@ export interface LivelineProps {
   cursor?: string          // CSS cursor on hover (default: 'crosshair')
   pulse?: boolean          // Pulsing ring on live dot (default: true)
   dashLine?: boolean       // Show horizontal dashed line at current value (default: true)
+  timeAxis?: boolean       // Show time axis baseline and labels (default: true)
 
   // Candlestick mode
   mode?: 'line' | 'candle'       // Chart type (default: 'line')

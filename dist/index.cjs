@@ -667,7 +667,7 @@ function niceTimeInterval(windowSecs) {
 
 // src/draw/timeAxis.ts
 var FADE = 0.08;
-function drawTimeAxis(ctx, layout, palette, windowSecs, targetWindowSecs, formatTime, state, dt) {
+function drawTimeAxis(skipBaseline, ctx, layout, palette, windowSecs, targetWindowSecs, formatTime, state, dt) {
   const { h, pad, leftEdge, rightEdge, toX } = layout;
   const chartLeft = pad.left;
   const chartRight = layout.w - pad.right;
@@ -724,12 +724,14 @@ function drawTimeAxis(ctx, layout, palette, windowSecs, targetWindowSecs, format
   const baseAlpha = ctx.globalAlpha;
   const lineY = h - pad.bottom;
   const tickLen = 5;
-  ctx.strokeStyle = palette.gridLine;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(chartLeft, lineY);
-  ctx.lineTo(chartRight, lineY);
-  ctx.stroke();
+  if (!skipBaseline) {
+    ctx.strokeStyle = palette.gridLine;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(chartLeft, lineY);
+    ctx.lineTo(chartRight, lineY);
+    ctx.stroke();
+  }
   ctx.textAlign = "center";
   const labels = [];
   for (const [key, label] of state.labels) {
@@ -1383,12 +1385,12 @@ function drawFrame(ctx, layout, palette, opts) {
   }
   const scrubX = opts.scrubAmount > 0.05 ? opts.hoverX : null;
   const pts = drawLine(ctx, layout, palette, opts.visible, opts.smoothValue, opts.now, opts.showFill, scrubX, opts.scrubAmount, reveal, opts.now_ms, 1, opts.skipDashLine);
-  {
+  if (!opts.skipTimeAxis) {
     const timeAlpha = reveal < 1 ? revealRamp(0.15, 0.7) : 1;
     if (timeAlpha > 0.01) {
       ctx.save();
       if (timeAlpha < 1) ctx.globalAlpha = timeAlpha;
-      drawTimeAxis(ctx, layout, palette, opts.windowSecs, opts.targetWindowSecs, opts.formatTime, opts.timeAxisState, opts.dt);
+      drawTimeAxis(false, ctx, layout, palette, opts.windowSecs, opts.targetWindowSecs, opts.formatTime, opts.timeAxisState, opts.dt);
       ctx.restore();
     }
   }
@@ -1642,12 +1644,14 @@ function drawCandleFrame(ctx, layout, palette, opts) {
       ctx.restore();
     }
   }
-  const timeAlpha = revealRamp(0.25, 0.6);
-  if (timeAlpha > 0.01) {
-    ctx.save();
-    if (timeAlpha < 1) ctx.globalAlpha = timeAlpha;
-    drawTimeAxis(ctx, layout, palette, opts.targetWindowSecs, opts.targetWindowSecs, opts.formatTime, opts.timeAxisState, opts.dt);
-    ctx.restore();
+  if (!opts.skipTimeAxis) {
+    const timeAlpha = revealRamp(0.25, 0.6);
+    if (timeAlpha > 0.01) {
+      ctx.save();
+      if (timeAlpha < 1) ctx.globalAlpha = timeAlpha;
+      drawTimeAxis(false, ctx, layout, palette, opts.targetWindowSecs, opts.targetWindowSecs, opts.formatTime, opts.timeAxisState, opts.dt);
+      ctx.restore();
+    }
   }
   ctx.save();
   ctx.globalCompositeOperation = "destination-out";
@@ -2793,7 +2797,8 @@ function useLivelineEngine(canvasRef, containerRef, config) {
         // decayed. This prevents the gradient gap from flashing during
         // loading→live (where loadingAlpha starts at ~1), while still
         // allowing smooth fade-out during empty→live (loadingAlpha is 0).
-        showEmptyOverlay: !(cfg.loading ?? false) && loadingAlpha < 0.01
+        showEmptyOverlay: !(cfg.loading ?? false) && loadingAlpha < 0.01,
+        skipTimeAxis: cfg.skipTimeAxis
       });
       if (badgeRef.current) {
         if (lineModeProg > 0.5 && cfg.showBadge) {
@@ -3065,6 +3070,7 @@ function Liveline({
   cursor = "crosshair",
   pulse = true,
   dashLine = true,
+  timeAxis = true,
   mode = "line",
   candles,
   candleWidth,
@@ -3170,7 +3176,8 @@ function Liveline({
     lineMode,
     lineData,
     lineValue,
-    skipDashLine: !dashLine
+    skipDashLine: !dashLine,
+    skipTimeAxis: !timeAxis
   });
   const cursorStyle = scrub ? cursor : "default";
   const activeColor = isDark ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.55)";

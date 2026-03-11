@@ -9,6 +9,7 @@ export interface TimeAxisState {
 const FADE = 0.08
 
 export function drawTimeAxis(
+  skipBaseline: boolean,
   ctx: CanvasRenderingContext2D,
   layout: ChartLayout,
   palette: LivelinePalette,
@@ -95,12 +96,14 @@ export function drawTimeAxis(
   const lineY = h - pad.bottom
   const tickLen = 5
 
-  ctx.strokeStyle = palette.gridLine
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(chartLeft, lineY)
-  ctx.lineTo(chartRight, lineY)
-  ctx.stroke()
+  if (!skipBaseline) {
+    ctx.strokeStyle = palette.gridLine
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(chartLeft, lineY)
+    ctx.lineTo(chartRight, lineY)
+    ctx.stroke()
+  }
 
   ctx.textAlign = 'center'
 

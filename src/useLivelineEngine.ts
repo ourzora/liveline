@@ -44,6 +44,7 @@ interface EngineConfig {
   paused?: boolean
   emptyText?: string
   skipDashLine: boolean
+  skipTimeAxis: boolean
 
   // Candlestick mode
   mode: 'line' | 'candle'
@@ -1377,6 +1378,7 @@ export function useLivelineEngine(
         // loading→live (where loadingAlpha starts at ~1), while still
         // allowing smooth fade-out during empty→live (loadingAlpha is 0).
         showEmptyOverlay: !(cfg.loading ?? false) && loadingAlpha < 0.01,
+        skipTimeAxis: cfg.skipTimeAxis,
       })
 
       // Badge in candle mode — only when in line mode (lineModeProg > 0.5)
